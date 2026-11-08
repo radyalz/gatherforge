@@ -73,3 +73,9 @@ Thumbs.db
 __pycache__/
 .venv/
 .pytest_cache/
+/dist/
+**/__pycache__/
+/build/
+*.spec
+/_Incoming/
+/xxx/
