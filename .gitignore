@@ -79,3 +79,11 @@ __pycache__/
 *.spec
 /_Incoming/
 /xxx/
+
+/target/
+/_Incoming/
+
+/target/
+/GatherForge-Rust-Linux
+/_Incoming/
+/xxx/

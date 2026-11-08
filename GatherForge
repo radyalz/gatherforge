@@ -1,5 +1,0 @@
-#!/usr/bin/env bash
-set -euo pipefail
-cd "$(dirname "$(realpath "$0")")"
-[ -x dist/gatherforge-core ] || go build -trimpath -o dist/gatherforge-core .
-exec python3 desktop/gatherforge.py
