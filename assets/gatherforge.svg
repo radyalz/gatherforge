@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="GatherForge">
+  <rect x="4" y="4" width="120" height="120" rx="32" fill="#101219"/>
+  <rect x="18" y="18" width="92" height="92" rx="24" fill="#cfef74"/>
+  <path d="M72 41c-19-8-38 0-38 23 0 19 14 27 30 27 14 0 25-8 28-21H66" fill="none" stroke="#1f2225" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="m75 40 11-11" stroke="#1f2225" stroke-width="8" stroke-linecap="round"/>
+</svg>

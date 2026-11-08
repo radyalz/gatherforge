@@ -1,8 +1,23 @@
 [package]
 name = "gatherforge"
-version = "3.1.0"
+version = "3.2.0"
 edition = "2024"
+authors = ["GatherForge contributors"]
+description = "Native Rust desktop toolkit for downloading and organizing media"
+repository = "https://github.com/radyalz/gatherforge"
 
 [dependencies]
-eframe = { version = "0.33.3", default-features = false, features = ["default_fonts", "glow", "x11", "wayland"] }
+eframe = { version = "=0.33.3", default-features = false, features = ["default_fonts", "glow", "x11", "wayland"] }
+lofty = "0.25"
 walkdir = "2.5"
+blake3 = "1.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rust_xlsxwriter = "0.102"
+rfd = "0.15"
+dirs = "6"
+url = "2.5"
+
+[profile.release]
+lto = "thin"
+strip = true

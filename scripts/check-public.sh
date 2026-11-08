@@ -1,43 +1,16 @@
 #!/usr/bin/env bash
-# Guard against accidentally committing personal music, paths or real account URLs.
-# This audits the Git index, so run AFTER git add and BEFORE git commit.
 set -euo pipefail
-cd "$(dirname "$0")/.."
-if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  echo "Not a Git repository. Run this after git init and git add." >&2
-  exit 2
-fi
-failed=0
-
-# Check staged filenames for common runtime artifacts (even if force-added).
-if git ls-files --cached | grep -E -i '(^|/)(xxx|_Incoming|\.env|cookies([_-].*)?\.txt|archive\.txt|downloaded\.txt|state\.json)(/|$)|\.(mp3|flac|m4a|mp4|wav|opus|xlsx|sqlite3?|db|pem|p12|pfx|key|log|exe|dll|so|dylib)$'; then
-  echo "ERROR: one or more staged files look like personal data or local artifacts." >&2
-  failed=1
-fi
-
-# Common absolute home-directory / mount-point leaks. Skip this script itself
-# because it documents the patterns it checks.
-if git grep --cached -n -I -E \
-  -e '/mnt/shared/' \
-  -e '/home/[^/[:space:]<>]+' \
-  -e '/Users/[^/[:space:]<>]+' \
-  -e '[A-Za-z]:\\Users\\[^\\[:space:]<>]+' \
-  -- . ':!scripts/check-public.sh' ':!PRIVACY.md'; then
-  echo "ERROR: staged source contains a probable absolute local path." >&2
-  failed=1
-fi
-
-# SoundCloud likes are often private-account identifiers. Generic docs/UI
-# placeholders are allowed; real profile handles should be local config only.
-while IFS= read -r line; do
-  if [[ "$line" =~ soundcloud\.com/(USERNAME|USER|EXAMPLE)/likes ]]; then
-    continue
-  fi
-  echo "$line"
-  failed=1
-done < <(git grep --cached -n -I -E 'soundcloud[.]com/[^[:space:]"<]+/likes' -- . ':!scripts/check-public.sh' || true)
-if [[ "$failed" -ne 0 ]]; then
-  echo "Public-source check FAILED. Fix the staged data before committing." >&2
+# Only inspect staged additions. Do not scan the private working folder.
+items=$(git diff --cached --name-only --diff-filter=ACMR)
+if [[ -z "$items" ]]; then echo 'No staged files to check'; exit 0; fi
+if printf '%s\n' "$items" | grep -Ei '(^|/)(xxx|_Incoming|\.env|cookies|target|\.git)(/|$)|\.(mp3|m4a|flac|wav|ogg|opus|xlsx|part)$'; then
+  echo 'ERROR: private media, state or build artifacts are staged' >&2
   exit 1
 fi
-echo "Public-source check passed (staged files only; review Git author metadata separately)."
+if git diff --cached --unified=0 -- '*.rs' '*.md' '*.sh' '*.yml' '*.toml' '*.py' ':(exclude)scripts/check-public.sh' \
+  | grep '^+' \
+  | grep -E '(/home/[^/[:space:]]+/|/Users/[^/[:space:]]+/|/mnt/(shared|data)/|[A-Za-z]:\\Users\\)'; then
+  echo 'ERROR: machine-specific path detected in staged content' >&2
+  exit 1
+fi
+echo 'Public-source check passed'

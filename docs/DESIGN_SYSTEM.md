@@ -1,22 +1,33 @@
-# GatherForge UI System
+# GatherForge — Collection Studio (v3.2)
 
-Visual direction: an editorial desktop workspace rather than a generic admin dashboard.
+## Point of view
+An editorial, music-first filing desk: paper content surfaces, midnight navigation, cobalt primary actions and a single copper record-label motif. Not a SaaS dashboard or neon gradient entertainment app.
 
-Palette:
-- Background: #0F1119
-- Surface: #1B1E2B
-- Primary accent: #A992FF
-- Highlight: #FFC475
-- Secondary text: #9DA4BA
+## Tokens
+- Paper `#F4F1EB` (main workspace)
+- Porcelain `#FFFEFA` (interactive content)
+- Midnight ink `#1B2430` (navigation and record hero)
+- Text `#222A34`
+- Cobalt `#364BBD` (interactive emphasis only)
+- Copper `#EE965D` (record artwork)
+- Secondary text `#5C636D`
+- Divider `#D6D3CB`
 
-Typography:
-- Page titles: 30px
-- Section labels: 12px
-- Body: 14-15px
+## Structure
+- 222 px left navigation; no generic eyebrow headings and no unnecessary numbered navigation markers.
+- Only one dramatic element: vinyl disc on the overview; operations remain clean and familiar.
+- Library list is row-dense; artist group and details are editable, not hidden behind popup gimmicks.
+- Feature hierarchy: review/keep decisions > staging > verified publish > finalize.
+- Downloads save to `_Incoming`; they do not publish automatically.
 
-Spacing: 4, 8, 12, 18, 24 and 32px.
-Cards: 16px corner radius.
-Controls: 10px corner radius.
+## Craft rules from source skills
+- Anthropic frontend-design: subject-specific character, distinctive typography and disciplined use of a single memorable element.
+- Impeccable Operate: native task affordances, contrast, explicit empty/error/loading states, no card soup.
+- better-ui: optical alignment, consistent nested corner radii, meaningful hover and selected states.
+- Avoid all-uppercase decorative labels, gradient text, fake analytics, and unrelated design embellishment.
 
-Use meaningful status colors and clear action labels.
-Viewing and filtering must never modify filesystem contents.
+## Typography
+Default egui proportional font; 28 px screen title, 19 px section title, 13 px body, 11–12 px captions. Native system font fallback is intentional to keep cross-platform builds dependable.
+
+## Accessibility
+Keyboard focus must remain visible; primary actions and status use both words and color; avoid motion without state change. Condense the overview on narrow windows rather than clipping core workflows.
