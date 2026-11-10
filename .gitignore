@@ -137,3 +137,7 @@ ai.json
 /tools/runtime-sources/
 /tools/**/__pycache__/
 *.pyc
+
+/ui/**/target/
+
+/ui/**/Cargo.lock

@@ -3,7 +3,7 @@ use eframe::egui::{self, Color32, RichText, Stroke};
 
 pub fn button(label: &str, primary: bool) -> egui::Button<'_> {
     let (fill, fg, border) = if primary {
-        (theme::lime(), theme::primary_text(), Stroke::NONE)
+        (theme::lime(), theme::primary_text(), Stroke::new(1.0_f32, theme::GOLD))
     } else {
         (
             theme::surface(),

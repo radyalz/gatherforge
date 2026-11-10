@@ -1,0 +1,9 @@
+[package]
+name = "gatherforge-rune-preview"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+rune = { git = "https://github.com/anomalyco/rune", rev = "1633f8d6c4f4f5804320ced1be4317e1ad4a9033" }
+rune-kit = { git = "https://github.com/anomalyco/rune", rev = "1633f8d6c4f4f5804320ced1be4317e1ad4a9033" }

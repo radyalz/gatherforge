@@ -20,28 +20,17 @@ pub fn brand(ui: &mut egui::Ui) {
         let (r, _) = ui.allocate_exact_size(Vec2::splat(38.0), egui::Sense::hover());
         let c = r.center();
         let p = ui.painter();
-        p.circle_filled(c, 18.0, Color32::from_rgba_unmultiplied(251, 193, 154, 48));
-        p.circle_stroke(
-            c,
-            16.8,
-            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 224, 206, 155)),
-        );
-        p.circle_stroke(c, 11.5, Stroke::new(2.0_f32, theme::SIGNAL));
-        p.circle_stroke(c, 6.3, Stroke::new(1.1_f32, theme::INK));
-        p.circle_filled(c, 2.1, theme::SIGNAL);
-        ui.add_space(7.0);
+        // Angular forged-metal mark; intentionally no rounded glass ornament.
+        p.add(egui::Shape::convex_polygon(vec![
+            c + Vec2::new(-16.0, -13.0), c + Vec2::new(6.0, -17.0),
+            c + Vec2::new(17.0, -5.0), c + Vec2::new(11.0, 14.0),
+            c + Vec2::new(-11.0, 15.0), c + Vec2::new(-17.0, 1.0),
+        ], theme::SIGNAL, Stroke::new(1.3, theme::GOLD)));
+        p.text(c, Align2::CENTER_CENTER, "G", FontId::proportional(22.0), Color32::WHITE);
+        ui.add_space(8.0);
         ui.vertical(|ui| {
-            ui.label(
-                RichText::new("GatherForge")
-                    .size(17.0)
-                    .strong()
-                    .color(theme::INK),
-            );
-            ui.label(
-                RichText::new("MEDIA WORKSPACE")
-                    .size(9.5)
-                    .color(Color32::from_rgb(168, 190, 207)),
-            );
+            ui.label(RichText::new("GatherForge").size(18.0).strong().color(theme::INK));
+            ui.label(RichText::new("FORGE EDITION / NATIVE DESKTOP").size(9.0).color(theme::GOLD));
         });
     });
 }
@@ -133,9 +122,9 @@ pub fn nav(
     let hovered = response.hovered();
     if active || hovered {
         let fill = if active {
-            Color32::from_rgba_unmultiplied(130, 175, 200, 53)
+            Color32::from_rgb(119, 18, 26)
         } else {
-            Color32::from_rgba_unmultiplied(220, 240, 255, 21)
+            Color32::from_rgb(52, 21, 24)
         };
         p.rect_filled(rect, theme::RADIUS as f32, fill);
         p.line_segment(
@@ -143,7 +132,7 @@ pub fn nav(
                 rect.left_top() + Vec2::new(7.0, 0.0),
                 rect.right_top() + Vec2::new(-7.0, 0.0),
             ],
-            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(226, 238, 247, 48)),
+            Stroke::new(1.0_f32, theme::GOLD),
         );
     }
     if active {
@@ -156,7 +145,7 @@ pub fn nav(
     let fg = if active {
         theme::INK
     } else {
-        Color32::from_rgb(182, 200, 215)
+        Color32::from_rgb(192, 160, 153)
     };
     icon(
         ui,

@@ -18,6 +18,7 @@ use std::{
 enum Page {
     #[default]
     Overview,
+    Media,
     Manager,
     Downloads,
     Library,
@@ -30,20 +31,22 @@ enum Page {
 impl Page {
     fn label(self) -> &'static str {
         match self {
-            Self::Overview => "Overview",
-            Self::Manager => "All activity",
-            Self::Downloads => "Music downloads",
-            Self::Library => "Music library",
+            Self::Overview => "Workspace",
+            Self::Media => "Media Library",
+            Self::Manager => "Tasks & Queue",
+            Self::Downloads => "Downloader",
+            Self::Library => "Music Categorizer",
             Self::Duplicates => "Duplicate review",
             Self::Artists => "Artist folders",
-            Self::ReelDownload => "Reel downloads",
-            Self::ReelManifest => "Reel feed",
+            Self::ReelDownload => "Reel downloader",
+            Self::ReelManifest => "Reel Library",
             Self::Settings => "Settings",
         }
     }
     fn initials(self) -> &'static str {
         match self {
             Self::Overview => "01",
+            Self::Media => "10",
             Self::Manager => "02",
             Self::Downloads => "03",
             Self::Library => "04",
@@ -470,6 +473,9 @@ impl GatherForge {
                 ) {
                     self.page = Page::Overview;
                 }
+                if components::chrome::nav(ui, "", Page::Media.label(), self.page == Page::Media, None) {
+                    self.page = Page::Media;
+                }
                 ui.add_space(14.0);
                 ui.label(
                     RichText::new("MUSIC")
@@ -592,49 +598,117 @@ impl GatherForge {
         ui.add_space(16.0);
     }
 
-    fn overview(&mut self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("Your media workspace").size(27.0).strong().color(theme::white()));
-        ui.label(RichText::new("Download, review and organize your music and Reels.").size(13.0).color(theme::muted()));
-        ui.add_space(18.0);
-        ui.horizontal_wrapped(|ui| {
-            if ui.add(components::controls::button("Music library", true)).clicked() { self.page = Page::Library; }
-            if ui.add(components::controls::button("Download music", false)).clicked() { self.page = Page::Downloads; }
-            if ui.add(components::controls::button("Download Reels", false)).clicked() { self.page = Page::ReelDownload; }
-            if ui.add(components::controls::button("Review Reels", false)).clicked() { self.page = Page::ReelManifest; }
+    fn forge_panel(ui: &mut egui::Ui, heading: &str, detail: &str, open_label: &str) -> bool {
+        let mut opened = false;
+        components::cards::surface().show(ui, |ui| {
+            ui.set_min_height(202.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new(heading).size(17.0).strong().color(theme::white()));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.add(components::controls::button(open_label, false)).clicked() { opened = true; }
+                });
+            });
+            ui.separator();
+            ui.label(RichText::new(detail).size(12.0).color(theme::muted()));
         });
-        ui.add_space(20.0);
-        ui.label(RichText::new("MUSIC AT A GLANCE").size(11.0).strong().color(theme::lime()));
-        ui.add_space(8.0);
+        opened
+    }
+
+    fn overview(&mut self, ui: &mut egui::Ui) {
+        ui.label(RichText::new("FORGE / WORKSPACE").size(11.0).strong().color(theme::lavender()));
+        ui.label(RichText::new("Forge your media").size(28.0).strong().color(theme::white()));
+        ui.label(RichText::new("Four connected workspaces. One local-first media engine.").size(12.0).color(theme::muted()));
+        ui.add_space(14.0);
+        ui.horizontal_wrapped(|ui| {
+            if ui.add(components::controls::button("Media Library", true)).clicked() { self.page = Page::Media; }
+            if ui.add(components::controls::button("Reel Library", false)).clicked() { self.page = Page::ReelManifest; }
+            if ui.add(components::controls::button("Music Categorizer", false)).clicked() { self.page = Page::Library; }
+            if ui.add(components::controls::button("Downloader", false)).clicked() { self.page = Page::Manager; }
+        });
+        ui.add_space(16.0);
+        ui.columns(2, |cols| {
+            let media_count = self.state.tracks.len() + self.reels.len();
+            if Self::forge_panel(&mut cols[0], "MEDIA LIBRARY", &format!("{media_count} indexed music tracks and Reels. Search, inspect, and review across sources."), "Open library") {
+                self.page = Page::Media;
+            }
+            if Self::forge_panel(&mut cols[1], "REEL LIBRARY", &format!("{} local Reels. Review previews, captions, OCR, transcription and categorization evidence.", self.reels.len()), "Review Reels") {
+                self.page = Page::ReelManifest;
+            }
+        });
+        ui.add_space(10.0);
+        ui.columns(2, |cols| {
+            if Self::forge_panel(&mut cols[0], "MUSIC CATEGORIZER", &format!("{} tracks, {} artists, {} possible duplicates. Organize using explicit review and approval.", self.state.tracks.len(), self.state.folders().len(), self.state.duplicates()), "Categorize") {
+                self.page = Page::Library;
+            }
+            if Self::forge_panel(&mut cols[1], "DOWNLOADER", &format!("{} active downloads and {} queued jobs. Music and Reels share a persistent local queue.", self.jobs.active_count(), self.jobs.queued_count()), "Open queue") {
+                self.page = Page::Manager;
+            }
+        });
+        ui.add_space(15.0);
         components::cards::surface().show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
-                components::cards::metric(ui, "Tracks", self.state.tracks.len(), "In the library", theme::white(), 0.0);
-                ui.add_space(24.0);
-                components::cards::metric(ui, "Artists", self.state.folders().len(), "Artist groups", theme::lime(), 0.0);
-                ui.add_space(24.0);
-                components::cards::metric(ui, "Possible duplicates", self.state.duplicates(), "Available for review", theme::coral(), 0.0);
+                components::cards::metric(ui, "Tracks", self.state.tracks.len(), "Indexed audio", theme::white(), 0.0);
+                ui.add_space(20.0);
+                components::cards::metric(ui, "Reels", self.reels.len(), "Local collection", theme::lavender(), 0.0);
+                ui.add_space(20.0);
+                components::cards::metric(ui, "To review", self.state.reviews() + self.state.duplicates(), "Before publishing", theme::coral(), 0.0);
             });
         });
-        ui.add_space(20.0);
-        if self.jobs.has_active() {
-            ui.label(RichText::new(format!("{} active downloads · {} waiting", self.jobs.active_count(), self.jobs.queued_count())).strong());
-            if ui.link("View all activity").clicked() { self.page = Page::Manager; }
-            ui.add_space(16.0);
-        }
         if self.state.tracks.is_empty() {
-            ui.label(RichText::new("Start with your music folder").size(17.0).strong());
-            ui.label(RichText::new("Scan the selected folder to review tracks and artists.").color(theme::muted()));
-            ui.add_space(8.0);
-            if ui.add_enabled(!self.busy, components::controls::button("Scan my library", true)).clicked() { self.run_operation(Operation::Scan); }
-        } else {
-            ui.label(RichText::new("Next: review your library").size(17.0).strong());
-            ui.label(RichText::new(format!("Current state: {}. Review tracks and artist names before staging and publishing.", self.state.phase.label())).color(theme::muted()));
-            ui.add_space(8.0);
-            ui.horizontal_wrapped(|ui| {
-                if ui.add(components::controls::button("Open music library", true)).clicked() { self.page = Page::Library; }
-                if ui.add(components::controls::button("Review duplicates", false)).clicked() { self.page = Page::Duplicates; }
-                if ui.add(components::controls::button("Artist folders", false)).clicked() { self.page = Page::Artists; }
-            });
+            ui.add_space(12.0);
+            if ui.add_enabled(!self.busy, components::controls::button("Scan music folder", true)).clicked() {
+                self.run_operation(Operation::Scan);
+            }
         }
+    }
+
+    fn media_library(&mut self, ui: &mut egui::Ui) {
+        ui.label(RichText::new("MEDIA / LIBRARY").size(11.0).strong().color(theme::lavender()));
+        ui.label(RichText::new("All indexed media").size(28.0).strong().color(theme::white()));
+        ui.label(RichText::new("Unified view of your local music and downloaded Reels. No destructive actions here.").color(theme::muted()));
+        ui.add_space(12.0);
+        ui.horizontal_wrapped(|ui| {
+            ui.add(egui::TextEdit::singleline(&mut self.manager_search).hint_text("Search title, artist or Reel caption").desired_width(320.0));
+            if ui.add(components::controls::button("Music categorizer", false)).clicked() { self.page = Page::Library; }
+            if ui.add(components::controls::button("Reel library", false)).clicked() { self.page = Page::ReelManifest; }
+        });
+        let query = self.manager_search.trim().to_lowercase();
+        ui.add_space(16.0);
+        components::cards::surface().show(ui, |ui| {
+            ui.label(RichText::new(format!("MUSIC / {} tracks", self.state.tracks.len())).strong().color(theme::lavender()));
+            ui.separator();
+            let mut found = 0;
+            for track in self.state.tracks.iter().filter(|t| query.is_empty() || t.title.to_lowercase().contains(&query) || t.artist.to_lowercase().contains(&query)).take(16) {
+                found += 1;
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new("AUDIO").size(10.0).strong().color(theme::lavender()));
+                    ui.label(RichText::new(&track.title).strong());
+                    ui.label(RichText::new(&track.artist).color(theme::muted()));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(RichText::new(track.action.label()).color(theme::muted()));
+                    });
+                });
+                ui.separator();
+            }
+            if found == 0 { ui.label(RichText::new("No matching music. Scan a folder or change your search.").color(theme::muted())); }
+        });
+        ui.add_space(12.0);
+        components::cards::surface().show(ui, |ui| {
+            ui.label(RichText::new(format!("REELS / {} saved", self.reels.len())).strong().color(theme::lavender()));
+            ui.separator();
+            let mut found = 0;
+            for reel in self.reels.iter().filter(|r| query.is_empty() || r.caption.to_lowercase().contains(&query) || r.creator.to_lowercase().contains(&query) || r.id.to_lowercase().contains(&query)).take(16) {
+                found += 1;
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new("REEL").size(10.0).strong().color(theme::lavender()));
+                    ui.label(RichText::new(&reel.id).strong());
+                    ui.label(RichText::new(&reel.creator).color(theme::muted()));
+                    if !reel.collection.is_empty() { ui.label(RichText::new(&reel.collection).color(theme::coral())); }
+                });
+                ui.separator();
+            }
+            if found == 0 { ui.label(RichText::new("No matching Reels. Download or refresh your Reel library.").color(theme::muted())); }
+        });
     }
 
     fn downloads(&mut self, ui: &mut egui::Ui) {
@@ -1774,6 +1848,7 @@ impl eframe::App for GatherForge {
                             self.header(ui);
                             match self.page {
                                 Page::Overview => self.overview(ui),
+                                Page::Media => self.media_library(ui),
                                 Page::Manager => self.download_manager(ui),
                                 Page::Downloads => self.downloads(ui),
                                 Page::Library => self.library(ui, false),
