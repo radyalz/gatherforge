@@ -1118,3 +1118,30 @@ impl Panel {
         );
     }
 }
+
+/// Headless native model operation for the Rune frontend. Reuses the same
+/// catalog validation, checksum verifier, budget enforcement, resume support,
+/// and project-contained storage used by the egui frontend.
+pub fn command_model(id: &str, operation: &str) -> Result<String, String> {
+    if !matches!(operation, "install" | "verify") {
+        return Err("Only install and verify are exposed to the Rune frontend".into());
+    }
+    let home = app_home();
+    let config = AiConfig::load(&home);
+    let models = validate_catalog(
+        serde_json::from_str::<Catalog>(include_str!("../models/catalog.json"))
+            .map(|c| c.models)
+            .unwrap_or_default(),
+    );
+    let model = models.iter().find(|m| m.id == id)
+        .ok_or_else(|| format!("Unknown or invalid model ID: {id}"))?;
+    if operation == "verify" {
+        if verified(&bundled(&home, model), model)? || verified(&installed(&home, model), model)? {
+            return Ok(format!("Checksum verified: {id}"));
+        }
+        return Err(format!("Model not installed or checksum mismatch: {id}"));
+    }
+    let cancel = AtomicBool::new(false);
+    let (tx, _rx) = mpsc::channel();
+    download(&home, model, &cancel, &tx, config.storage_limit_mb)
+}
