@@ -69,3 +69,29 @@ GatherForge core (library, downloader, jobs, instagram, reel_flow, ai_models)
 - [ ] Retire egui only after comparable production tests and explicit review.
 
 This document should not be used as a claim that migration is complete. The snapshot is from 2026-11-10 and actual project revisions may have changed since.
+
+## Forge Batch 02 — actual desktop surface (egui bridge)
+
+The following is a live UI implementation on the existing, working `eframe` frontend,
+**not** a completed Rune migration or a claim of pixel parity with the concept screenshot.
+The reference image is the target for the final Rune frontend. Batch 02 replaces
+Batch 01's text-only Workspace with actual indexed records and functional navigation:
+
+- Workspace: dense four-area operational surface with real track, Reel, review, and queue counts;
+  recent media rows, review candidates, and download activity.
+- Media Library: global search, All/Audio/Reels filters, virtualized rows, previews on visible
+  items, and links to the existing music and Reel workspaces.
+- Reel Library: fast Reel selector/index, focused evidence review, non-destructive approvals.
+  The original analysis and removal safeguards remain intact.
+- Music Categorizer: compact virtualized table as default, artwork grid as alternative,
+  with the existing selected-track inspector.
+- Command bar: real navigation to downloader, Reel Studio and model settings, with a live status.
+
+### Still missing
+
+- Full Rune application service integration and production replacement of the egui binary.
+- Actual in-window video playback/timeline and draggable dock panes.
+- Pixel-accurate Forge concept implementation and reliable cross-platform screenshots.
+- Formal live keyboard, RTL/IME, and GPU benchmarks on user hardware.
+
+Never label these unfinished items complete; the existing application remains the supported host.

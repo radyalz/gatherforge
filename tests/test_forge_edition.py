@@ -13,7 +13,9 @@ class ForgeEdition(unittest.TestCase):
         code = (ROOT/'src/app.rs').read_text()
         self.assertIn('Media,', code)
         self.assertIn('fn media_library(', code)
-        self.assertIn('"FORGE / WORKSPACE"', code)
+        self.assertIn('"MEDIA COMMAND CENTER"', code)
+        self.assertIn('"forge_asset_virtual_rows"', code)
+        self.assertIn('"forge_music_virtual_rows"', code)
         self.assertIn('Page::Media => self.media_library(ui)', code)
     def test_reference_and_rune_are_isolated(self):
         self.assertTrue((ROOT/'docs/design/forge_reference_dark.png').is_file())

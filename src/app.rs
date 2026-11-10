@@ -59,6 +59,23 @@ impl Page {
     }
 }
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
+enum MediaScope {
+    #[default]
+    All,
+    Music,
+    Reels,
+}
+impl MediaScope {
+    fn label(self) -> &'static str {
+        match self {
+            Self::All => "All media",
+            Self::Music => "Audio",
+            Self::Reels => "Reels",
+        }
+    }
+}
+
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
 enum QueueTab {
     #[default]
     All,
@@ -120,12 +137,17 @@ enum ReelSource {
     Saved,
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(default)]
 struct LocalSettings {
     library: Option<PathBuf>,
     dark: bool,
     reels_folder: Option<PathBuf>,
+}
+impl Default for LocalSettings {
+    fn default() -> Self {
+        Self { library: None, dark: true, reels_folder: None }
+    }
 }
 fn settings_path() -> PathBuf {
     dirs::config_dir()
@@ -252,6 +274,9 @@ pub struct GatherForge {
     dark: bool,
     reel_urls: String,
     reel_filter: String,
+    reel_focus: Option<String>,
+    media_scope: MediaScope,
+    music_table: bool,
     reel_root: PathBuf,
     reels: Vec<crate::instagram::Reel>,
     saved_unsave_after: bool,
@@ -301,6 +326,9 @@ impl GatherForge {
             dark: prefs.dark,
             reel_urls: String::new(),
             reel_filter: String::new(),
+            reel_focus: None,
+            media_scope: MediaScope::All,
+            music_table: true,
             reel_root: reel_root.clone(),
             reels: crate::instagram::refresh(&reel_root).unwrap_or_default(),
             saved_unsave_after: false,
@@ -568,146 +596,256 @@ impl GatherForge {
     }
 
     fn header(&mut self, ui: &mut egui::Ui) {
-        let reel_page = matches!(self.page, Page::ReelDownload | Page::ReelManifest);
         let working = self.busy || self.jobs.has_active() || self.reel_flow.busy();
-        ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("GATHERFORGE").size(11.0).strong().color(theme::lime()));
-            ui.label(RichText::new(format!("/ {}", self.page.label())).size(12.0).color(theme::muted()));
-            components::controls::pill(ui, if working { "WORKING" } else { "READY" }, if working { theme::lime() } else { theme::lavender() });
-        });
-        ui.add_space(8.0);
-        ui.horizontal_wrapped(|ui| {
-            let path = if reel_page { &self.reel_root } else { &self.root };
-            ui.label(RichText::new(if reel_page { "Reels folder:" } else { "Music folder:" }).size(11.0).color(theme::muted()));
-            ui.add(egui::Label::new(RichText::new(path.display().to_string()).size(11.0).color(theme::muted())).truncate());
-            if ui.small_button("Change folder").clicked() {
-                if reel_page { self.choose_reel_folder(); } else { self.choose_folder(); }
-            }
-        });
+        let reel_page = matches!(self.page, Page::ReelDownload | Page::ReelManifest);
+        // Persistent command strip: quick paths, live status, and the current workspace.
+        egui::Frame::new()
+            .fill(theme::surface_raised())
+            .stroke(egui::Stroke::new(1.0, theme::glass_edge()))
+            .corner_radius(egui::CornerRadius::same(0))
+            .inner_margin(egui::Margin::symmetric(14, 10))
+            .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new("GF / FORGE").monospace().size(12.0).strong().color(theme::lime()));
+                    ui.label(RichText::new(format!("/ {}", self.page.label().to_uppercase())).size(12.0).strong());
+                    components::controls::pill(ui, if working { "PROCESSING" } else { "SYSTEM READY" },
+                        if working { theme::lime() } else { theme::GOLD });
+                    ui.add_space(12.0);
+                    if ui.add(components::controls::button("+ DOWNLOAD", true)).clicked() { self.page = Page::Downloads; }
+                    if ui.add(components::controls::button("REEL STUDIO", false)).clicked() { self.page = Page::ReelManifest; }
+                    if ui.add(components::controls::button("MODELS", false)).clicked() { self.page = Page::Settings; }
+                    let theme_label = if self.dark { "LIGHT MODE" } else { "DARK MODE" };
+                    if ui.add(components::controls::button(theme_label, false)).clicked() {
+                        self.dark = !self.dark;
+                        theme::install(ui.ctx(), self.dark);
+                        let mut prefs = LocalSettings::load();
+                        prefs.dark = self.dark;
+                        prefs.save();
+                    }
+                });
+                ui.add_space(5.0);
+                ui.horizontal_wrapped(|ui| {
+                    let path = if reel_page { &self.reel_root } else { &self.root };
+                    ui.label(RichText::new("WORKING DIRECTORY").monospace().size(10.0).color(theme::GOLD));
+                    ui.add(egui::Label::new(RichText::new(path.display().to_string()).size(11.0).color(theme::muted())).truncate());
+                    if ui.small_button("CHANGE").clicked() {
+                        if reel_page { self.choose_reel_folder(); } else { self.choose_folder(); }
+                    }
+                });
+            });
         if let Some(error) = self.error.clone() {
             ui.add_space(8.0);
-            egui::Frame::new().fill(theme::error().gamma_multiply(0.10)).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(13)).show(ui, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new(format!("Action needed: {error}")).size(12.0).color(theme::error()));
-                    if ui.button("Dismiss").clicked() { self.error = None; }
+            egui::Frame::new().fill(theme::error().gamma_multiply(0.15))
+                .stroke(egui::Stroke::new(1.0, theme::error()))
+                .inner_margin(egui::Margin::same(10)).show(ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(RichText::new(format!("ATTENTION / {error}")).size(12.0).color(theme::error()));
+                        if ui.button("Dismiss").clicked() { self.error = None; }
+                    });
                 });
-            });
         }
-        ui.add_space(16.0);
-        ui.separator();
-        ui.add_space(16.0);
+        ui.add_space(14.0);
     }
 
-    fn forge_panel(ui: &mut egui::Ui, heading: &str, detail: &str, open_label: &str) -> bool {
-        let mut opened = false;
-        components::cards::surface().show(ui, |ui| {
-            ui.set_min_height(202.0);
-            ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(heading).size(17.0).strong().color(theme::white()));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.add(components::controls::button(open_label, false)).clicked() { opened = true; }
-                });
+    fn forge_module_header(ui: &mut egui::Ui, title: &str, subtitle: &str, action: &str) -> bool {
+        let mut clicked = false;
+        ui.horizontal(|ui| {
+            ui.vertical(|ui| {
+                ui.label(RichText::new(title).monospace().size(13.0).strong().color(theme::white()));
+                ui.label(RichText::new(subtitle).size(11.0).color(theme::muted()));
             });
-            ui.separator();
-            ui.label(RichText::new(detail).size(12.0).color(theme::muted()));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.add(components::controls::button(action, false)).clicked() { clicked = true; }
+            });
         });
-        opened
+        ui.add_space(5.0);
+        ui.separator();
+        ui.add_space(5.0);
+        clicked
+    }
+
+    fn forge_line(ui: &mut egui::Ui, tag: &str, name: &str, secondary: &str) {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(tag).monospace().size(10.0).strong().color(theme::GOLD));
+            ui.add(egui::Label::new(RichText::new(name).size(12.0).strong()).truncate());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(RichText::new(secondary).size(10.0).color(theme::muted()));
+            });
+        });
+        ui.separator();
     }
 
     fn overview(&mut self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("FORGE / WORKSPACE").size(11.0).strong().color(theme::lavender()));
-        ui.label(RichText::new("Forge your media").size(28.0).strong().color(theme::white()));
-        ui.label(RichText::new("Four connected workspaces. One local-first media engine.").size(12.0).color(theme::muted()));
-        ui.add_space(14.0);
         ui.horizontal_wrapped(|ui| {
-            if ui.add(components::controls::button("Media Library", true)).clicked() { self.page = Page::Media; }
-            if ui.add(components::controls::button("Reel Library", false)).clicked() { self.page = Page::ReelManifest; }
-            if ui.add(components::controls::button("Music Categorizer", false)).clicked() { self.page = Page::Library; }
-            if ui.add(components::controls::button("Downloader", false)).clicked() { self.page = Page::Manager; }
-        });
-        ui.add_space(16.0);
-        ui.columns(2, |cols| {
-            let media_count = self.state.tracks.len() + self.reels.len();
-            if Self::forge_panel(&mut cols[0], "MEDIA LIBRARY", &format!("{media_count} indexed music tracks and Reels. Search, inspect, and review across sources."), "Open library") {
-                self.page = Page::Media;
-            }
-            if Self::forge_panel(&mut cols[1], "REEL LIBRARY", &format!("{} local Reels. Review previews, captions, OCR, transcription and categorization evidence.", self.reels.len()), "Review Reels") {
-                self.page = Page::ReelManifest;
-            }
-        });
-        ui.add_space(10.0);
-        ui.columns(2, |cols| {
-            if Self::forge_panel(&mut cols[0], "MUSIC CATEGORIZER", &format!("{} tracks, {} artists, {} possible duplicates. Organize using explicit review and approval.", self.state.tracks.len(), self.state.folders().len(), self.state.duplicates()), "Categorize") {
-                self.page = Page::Library;
-            }
-            if Self::forge_panel(&mut cols[1], "DOWNLOADER", &format!("{} active downloads and {} queued jobs. Music and Reels share a persistent local queue.", self.jobs.active_count(), self.jobs.queued_count()), "Open queue") {
-                self.page = Page::Manager;
-            }
-        });
-        ui.add_space(15.0);
-        components::cards::surface().show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                components::cards::metric(ui, "Tracks", self.state.tracks.len(), "Indexed audio", theme::white(), 0.0);
-                ui.add_space(20.0);
-                components::cards::metric(ui, "Reels", self.reels.len(), "Local collection", theme::lavender(), 0.0);
-                ui.add_space(20.0);
-                components::cards::metric(ui, "To review", self.state.reviews() + self.state.duplicates(), "Before publishing", theme::coral(), 0.0);
+            ui.vertical(|ui| {
+                ui.label(RichText::new("FORGE CONTROL / 01").monospace().size(11.0).strong().color(theme::GOLD));
+                ui.label(RichText::new("MEDIA COMMAND CENTER").size(27.0).strong().color(theme::white()));
+                ui.label(RichText::new("One operational workspace. All local media, downloads and review queues.").size(12.0).color(theme::muted()));
+            });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.add_enabled(!self.busy, components::controls::button("SCAN LIBRARY", true)).clicked() {
+                    self.run_operation(Operation::Scan);
+                }
             });
         });
-        if self.state.tracks.is_empty() {
-            ui.add_space(12.0);
-            if ui.add_enabled(!self.busy, components::controls::button("Scan music folder", true)).clicked() {
-                self.run_operation(Operation::Scan);
+        ui.add_space(13.0);
+        let tracks = self.state.tracks.len();
+        let reels = self.reels.len();
+        let pending = self.jobs.active_count() + self.jobs.queued_count();
+        let reviews = self.state.reviews() + self.state.duplicates();
+        let stats = [
+            ("TRACKS INDEXED", tracks, "LOCAL AUDIO", theme::white()),
+            ("REELS CAPTURED", reels, "LOCAL VIDEO", theme::GOLD),
+            ("ACTIVE PIPELINE", pending, "DOWNLOAD QUEUE", theme::lime()),
+            ("NEEDS REVIEW", reviews, "ORGANIZATION", theme::coral()),
+        ];
+        ui.columns(4, |cols| {
+            for (col, (label, value, hint, tint)) in cols.iter_mut().zip(stats.into_iter()) {
+                components::cards::surface().show(col, |ui| {
+                    ui.set_min_height(92.0);
+                    ui.label(RichText::new(label).size(10.0).monospace().color(theme::GOLD));
+                    ui.label(RichText::new(value.to_string()).size(27.0).strong().color(tint));
+                    ui.label(RichText::new(hint).size(10.0).color(theme::muted()));
+                });
             }
-        }
+        });
+        ui.add_space(12.0);
+
+        let recent_music: Vec<(String, String, String)> = self.state.tracks.iter().take(7)
+            .map(|t| (t.title.clone(), t.artist.clone(), t.action.label().to_owned())).collect();
+        let recent_reels: Vec<(String, String)> = self.reels.iter().take(5)
+            .map(|r| (if r.caption.is_empty() { r.id.clone() } else { r.caption.chars().take(60).collect() }, r.creator.clone())).collect();
+        ui.columns(2, |cols| {
+            components::cards::surface().show(&mut cols[0], |ui| {
+                if Self::forge_module_header(ui, "01 / MEDIA LIBRARY", &format!("{tracks} audio files in the local index"), "OPEN LIBRARY") {
+                    self.page = Page::Media;
+                }
+                for (title, artist, status) in &recent_music {
+                    Self::forge_line(ui, "AUDIO", title, &format!("{artist}  /  {status}"));
+                }
+                if recent_music.is_empty() {
+                    ui.label(RichText::new("No indexed tracks. Scan your music directory to populate this table.").color(theme::muted()));
+                }
+            });
+            components::cards::surface().show(&mut cols[1], |ui| {
+                if Self::forge_module_header(ui, "02 / REEL LIBRARY", &format!("{reels} saved videos, with analysis evidence"), "REEL STUDIO") {
+                    self.page = Page::ReelManifest;
+                }
+                for (caption, creator) in &recent_reels {
+                    Self::forge_line(ui, "REEL", caption, creator);
+                }
+                if recent_reels.is_empty() {
+                    ui.label(RichText::new("No Reels yet. Download or import a Reel to begin analysis.").color(theme::muted()));
+                }
+                if ui.add(components::controls::button("OPEN REEL DOWNLOADER", false)).clicked() {
+                    self.page = Page::ReelDownload;
+                }
+            });
+        });
+        ui.add_space(12.0);
+        let review_music: Vec<(String, String)> = self.state.tracks.iter()
+            .filter(|t| t.duplicate_of.is_some() || t.action == Decision::Review)
+            .take(5).map(|t| (t.title.clone(), t.artist.clone())).collect();
+        let last_jobs: Vec<(String, String)> = self.jobs.jobs().iter().rev().take(5)
+            .map(|j| (Self::job_title(j), j.state.label().to_owned())).collect();
+        ui.columns(2, |cols| {
+            components::cards::surface().show(&mut cols[0], |ui| {
+                if Self::forge_module_header(ui, "03 / MUSIC CATEGORIZER", &format!("{reviews} items to review, {} artist folders", self.state.folders().len()), "ORGANIZE") {
+                    self.page = Page::Library;
+                }
+                for (title, artist) in &review_music { Self::forge_line(ui, "REVIEW", title, artist); }
+                if review_music.is_empty() { ui.label(RichText::new("No pending music review items.").color(theme::muted())); }
+                if ui.add(components::controls::button("DUPLICATE REVIEW", false)).clicked() { self.page = Page::Duplicates; }
+            });
+            components::cards::surface().show(&mut cols[1], |ui| {
+                if Self::forge_module_header(ui, "04 / DOWNLOAD MANAGER", &format!("{pending} active or queued tasks"), "OPEN QUEUE") {
+                    self.page = Page::Manager;
+                }
+                for (title, state) in &last_jobs { Self::forge_line(ui, "JOB", title, state); }
+                if last_jobs.is_empty() { ui.label(RichText::new("No transfers yet. Start a download to populate the queue.").color(theme::muted())); }
+                if ui.add(components::controls::button("NEW MUSIC DOWNLOAD", true)).clicked() { self.page = Page::Downloads; }
+            });
+        });
     }
 
     fn media_library(&mut self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("MEDIA / LIBRARY").size(11.0).strong().color(theme::lavender()));
-        ui.label(RichText::new("All indexed media").size(28.0).strong().color(theme::white()));
-        ui.label(RichText::new("Unified view of your local music and downloaded Reels. No destructive actions here.").color(theme::muted()));
+        ui.label(RichText::new("ASSET INDEX / 02").monospace().size(11.0).strong().color(theme::GOLD));
+        ui.label(RichText::new("MEDIA LIBRARY").size(27.0).strong());
+        ui.label(RichText::new("Search and inspect music and Reels without changing source files.").color(theme::muted()));
         ui.add_space(12.0);
         ui.horizontal_wrapped(|ui| {
-            ui.add(egui::TextEdit::singleline(&mut self.manager_search).hint_text("Search title, artist or Reel caption").desired_width(320.0));
-            if ui.add(components::controls::button("Music categorizer", false)).clicked() { self.page = Page::Library; }
-            if ui.add(components::controls::button("Reel library", false)).clicked() { self.page = Page::ReelManifest; }
+            ui.add(egui::TextEdit::singleline(&mut self.manager_search)
+                .hint_text("Search title, artist, creator or caption...")
+                .desired_width(350.0));
+            for scope in [MediaScope::All, MediaScope::Music, MediaScope::Reels] {
+                ui.selectable_value(&mut self.media_scope, scope, scope.label());
+            }
+            if ui.add(components::controls::button("SCAN", false)).clicked() { self.run_operation(Operation::Scan); }
         });
+        ui.add_space(10.0);
         let query = self.manager_search.trim().to_lowercase();
-        ui.add_space(16.0);
-        components::cards::surface().show(ui, |ui| {
-            ui.label(RichText::new(format!("MUSIC / {} tracks", self.state.tracks.len())).strong().color(theme::lavender()));
-            ui.separator();
-            let mut found = 0;
-            for track in self.state.tracks.iter().filter(|t| query.is_empty() || t.title.to_lowercase().contains(&query) || t.artist.to_lowercase().contains(&query)).take(16) {
-                found += 1;
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new("AUDIO").size(10.0).strong().color(theme::lavender()));
-                    ui.label(RichText::new(&track.title).strong());
-                    ui.label(RichText::new(&track.artist).color(theme::muted()));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(RichText::new(track.action.label()).color(theme::muted()));
-                    });
-                });
-                ui.separator();
+        let mut items: Vec<(bool, String, String, String, String, PathBuf)> = Vec::new();
+        if self.media_scope != MediaScope::Reels {
+            for t in &self.state.tracks {
+                if !query.is_empty() && !format!("{} {} {}", t.title, t.artist, t.filename).to_lowercase().contains(&query) { continue; }
+                // Defer filesystem access to visible rows only.
+                items.push((false, t.title.clone(), t.artist.clone(), t.action.label().to_owned(), t.format.clone(), PathBuf::from(&t.original)));
             }
-            if found == 0 { ui.label(RichText::new("No matching music. Scan a folder or change your search.").color(theme::muted())); }
-        });
-        ui.add_space(12.0);
-        components::cards::surface().show(ui, |ui| {
-            ui.label(RichText::new(format!("REELS / {} saved", self.reels.len())).strong().color(theme::lavender()));
-            ui.separator();
-            let mut found = 0;
-            for reel in self.reels.iter().filter(|r| query.is_empty() || r.caption.to_lowercase().contains(&query) || r.creator.to_lowercase().contains(&query) || r.id.to_lowercase().contains(&query)).take(16) {
-                found += 1;
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new("REEL").size(10.0).strong().color(theme::lavender()));
-                    ui.label(RichText::new(&reel.id).strong());
-                    ui.label(RichText::new(&reel.creator).color(theme::muted()));
-                    if !reel.collection.is_empty() { ui.label(RichText::new(&reel.collection).color(theme::coral())); }
-                });
-                ui.separator();
+        }
+        if self.media_scope != MediaScope::Music {
+            for r in &self.reels {
+                if !query.is_empty() && !format!("{} {} {}", r.id, r.caption, r.creator).to_lowercase().contains(&query) { continue; }
+                let title = if r.caption.is_empty() { format!("Reel {}", r.id) } else { r.caption.chars().take(110).collect() };
+                items.push((true, title, r.creator.clone(), if r.collection.is_empty() { "UNSORTED".into() } else { r.collection.clone() }, "MP4".into(), PathBuf::from(&r.video)));
             }
-            if found == 0 { ui.label(RichText::new("No matching Reels. Download or refresh your Reel library.").color(theme::muted())); }
+        }
+        components::cards::surface().show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(format!("{} MATCHING ASSETS", items.len())).monospace().strong().color(theme::GOLD));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.add(components::controls::button("REEL LIBRARY", false)).clicked() { self.page = Page::ReelManifest; }
+                    if ui.add(components::controls::button("MUSIC REVIEW", false)).clicked() { self.page = Page::Library; }
+                });
+            });
+            ui.separator();
+            let table_width = ui.available_width().max(560.0);
+            let title_width = table_width * 0.33;
+            let maker_width = table_width * 0.20;
+            let category_width = table_width * 0.20;
+            ui.horizontal(|ui| {
+                ui.add_sized([48.0, 22.0], egui::Label::new(RichText::new("TYPE").monospace().size(10.0).color(theme::GOLD)));
+                ui.add_sized([title_width, 22.0], egui::Label::new(RichText::new("TITLE").monospace().size(10.0).color(theme::GOLD)));
+                ui.add_sized([maker_width, 22.0], egui::Label::new(RichText::new("CREATOR / ARTIST").monospace().size(10.0).color(theme::GOLD)));
+                ui.add_sized([category_width, 22.0], egui::Label::new(RichText::new("DECISION").monospace().size(10.0).color(theme::GOLD)));
+                ui.label(RichText::new("FORMAT").monospace().size(10.0).color(theme::GOLD));
+            });
+            ui.separator();
+            egui::ScrollArea::vertical().id_salt("forge_asset_virtual_rows").max_height(630.0)
+                .show_rows(ui, 50.0, items.len(), |ui, range| {
+                    for (is_reel, title, creator, status, format, path) in &items[range] {
+                        ui.horizontal(|ui| {
+                            ui.allocate_ui_with_layout(egui::vec2(48.0, 42.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                if !path.as_os_str().is_empty() {
+                                    let root = if *is_reel { &self.reel_root } else { &self.root };
+                                    if let Some(texture) = self.reel_previews.texture(ui.ctx(), root, path.to_str().unwrap_or("")) {
+                                        ui.add(egui::Image::new(&texture).fit_to_exact_size(egui::vec2(36.0, 36.0)));
+                                    } else { ui.label(if *is_reel { "VIDEO" } else { "AUDIO" }); }
+                                } else { ui.label(if *is_reel { "VIDEO" } else { "AUDIO" }); }
+                            });
+                            if ui.add_sized([title_width, 34.0], egui::Button::new(RichText::new(title).size(12.0).strong())
+                                .fill(theme::surface()).stroke(egui::Stroke::NONE)).clicked() {
+                                self.page = if *is_reel { Page::ReelManifest } else { Page::Library };
+                            }
+                            ui.add_sized([maker_width, 34.0], egui::Label::new(RichText::new(creator).size(11.0).color(theme::muted())).truncate());
+                            ui.add_sized([category_width, 34.0], egui::Label::new(RichText::new(status).size(11.0).color(theme::white())).truncate());
+                            ui.label(RichText::new(format).monospace().size(10.0).color(theme::GOLD));
+                        });
+                    }
+                });
+            if items.is_empty() {
+                ui.add_space(12.0);
+                ui.label(RichText::new("No media matches these filters. Adjust the query or scan a folder.").color(theme::muted()));
+            }
         });
     }
 
@@ -1219,6 +1357,7 @@ impl GatherForge {
                     .hint_text("Search songs / artists..."),
             );
             ui.checkbox(&mut self.only_kept, "Keep only");
+            ui.checkbox(&mut self.music_table, "Table view");
         });
         ui.add_space(10.0);
         let query = self.filter.to_lowercase();
@@ -1241,8 +1380,30 @@ impl GatherForge {
                 .size(10.0)
                 .color(theme::muted()),
         );
+        if self.music_table {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("TRACK / CLICK TO EDIT").size(10.0).monospace().color(theme::GOLD));
+                ui.label(RichText::new("ARTIST · FORMAT · STATUS").size(10.0).color(theme::muted()));
+            });
+            egui::ScrollArea::vertical().id_salt("forge_music_virtual_rows")
+                .max_height(490.0).show_rows(ui, 42.0, rows.len(), |ui, range| {
+                    for track in &rows[range] {
+                        ui.horizontal(|ui| {
+                            let available = ui.available_width();
+                            if ui.add_sized([available * 0.44, 30.0], egui::Button::new(&track.title)
+                                .fill(if self.selected == Some(track.id) { theme::glass_hover() } else { theme::surface() }))
+                                .clicked() { self.select_track(track); }
+                            ui.add_sized([available * 0.28, 30.0], egui::Label::new(&track.artist).truncate());
+                            ui.label(RichText::new(&track.format).size(10.0).color(theme::muted()));
+                            ui.label(RichText::new(track.action.label()).size(11.0)
+                                .color(if track.duplicate_of.is_some() { theme::coral() } else { theme::GOLD }));
+                        });
+                    }
+                });
+            return;
+        }
         egui::ScrollArea::vertical().drag_to_scroll(false)
-            .max_height(430.0)
+            .max_height(490.0)
             .show(ui, |ui| {
                 let count = ((ui.available_width() / 190.0).floor() as usize).clamp(1, 4);
                 for chunk in rows.chunks(count) {
@@ -1578,6 +1739,41 @@ impl GatherForge {
             ui.label(RichText::new("Unsaving is a separate action in the browser and requires approval and verification.").size(11.0).color(theme::muted()));
         });
         ui.add_space(14.0);
+        // Do not repeatedly read Reel analysis files just to paint dashboard counters.
+        let collections = self.reels.iter().map(|r| r.collection.as_str())
+            .filter(|s| !s.is_empty()).collect::<std::collections::BTreeSet<_>>().len();
+        let active_reel_jobs = self.jobs.jobs().iter()
+            .filter(|j| j.kind.is_reel() && j.state.is_pending()).count();
+        ui.columns(3, |cols| {
+            for (col, (label, value)) in cols.iter_mut().zip([
+                ("LOCAL REELS", self.reels.len()),
+                ("COLLECTIONS", collections),
+                ("ACTIVE REEL JOBS", active_reel_jobs),
+            ]) {
+                components::cards::surface().show(col, |ui| {
+                    ui.label(RichText::new(label).monospace().size(10.0).color(theme::GOLD));
+                    ui.label(RichText::new(value.to_string()).size(21.0).strong().color(theme::white()));
+                });
+            }
+        });
+        ui.add_space(12.0);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("REEL INDEX / SELECT TO INSPECT").monospace().size(11.0).strong().color(theme::GOLD));
+            if self.reel_focus.is_some() && ui.add(components::controls::button("SHOW ALL", false)).clicked() {
+                self.reel_focus = None;
+            }
+        });
+        let strip: Vec<(String, String)> = self.reels.iter().take(24)
+            .map(|r| (r.id.clone(), if r.creator.is_empty() { r.id.clone() } else { format!("@{}", r.creator) })).collect();
+        egui::ScrollArea::horizontal().id_salt("forge_reel_index").show(ui, |ui| {
+            ui.horizontal(|ui| {
+                for (id, label) in strip {
+                    let selected = self.reel_focus.as_deref() == Some(id.as_str());
+                    if ui.selectable_label(selected, label).clicked() { self.reel_focus = Some(id); }
+                }
+            });
+        });
+        ui.add_space(12.0);
         ui.label(RichText::new("YOUR REELS").size(11.0).strong().color(theme::lime()));
         ui.add_space(5.0);
         let search_width = ui.available_width().clamp(0.0, 700.0);
@@ -1593,9 +1789,10 @@ impl GatherForge {
             let analysis = crate::reel_flow::Flow::read(&self.reel_root, &reel.video);
             let category = analysis.as_ref().and_then(|v| v.get("approved_category")).and_then(serde_json::Value::as_str).unwrap_or("");
             if !format!("{} {} {} {} {}", reel.creator, reel.caption, reel.id, reel.date, category).to_lowercase().contains(&q) { continue; }
+            if self.reel_focus.as_ref().is_some_and(|focus| focus != &reel.id) { continue; }
             shown += 1;
             ui.push_id((&reel.id, &reel.video), |ui| {
-                ui.set_max_width(720.0);
+                ui.set_max_width(ui.available_width().min(1060.0));
                 components::cards::surface().show(ui, |ui| {
                     ui.horizontal_wrapped(|ui| {
                         let creator = if reel.creator.is_empty() { "Unknown creator".to_owned() } else { format!("@{}", reel.creator) };
@@ -1837,6 +2034,25 @@ impl eframe::App for GatherForge {
                     .id_salt("sidebar_scroll")
                     .drag_to_scroll(false)
                     .show(ui, |ui| self.sidebar(ui));
+            });
+        egui::TopBottomPanel::bottom("forge_status_line")
+            .resizable(false)
+            .frame(egui::Frame::new().fill(theme::surface_raised())
+                .stroke(egui::Stroke::new(1.0, theme::glass_edge()))
+                .inner_margin(egui::Margin::symmetric(14, 6)))
+            .show(ctx, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new("FORGE ENGINE / LOCAL").monospace().size(10.0).strong().color(theme::lime()));
+                    ui.separator();
+                    ui.label(RichText::new(format!("{} TRACKS   /   {} REELS", self.state.tracks.len(), self.reels.len()))
+                        .monospace().size(10.0).color(theme::muted()));
+                    ui.separator();
+                    ui.label(RichText::new(format!("{} QUEUED", self.jobs.queued_count()))
+                        .monospace().size(10.0).color(theme::GOLD));
+                    ui.separator();
+                    ui.label(RichText::new(if self.busy || self.jobs.has_active() { "ENGINE ACTIVE" } else { "READY" })
+                        .monospace().size(10.0).color(theme::white()));
+                });
             });
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(theme::base()))
