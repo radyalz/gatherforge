@@ -1,0 +1,10 @@
+# All local config, staging and user-downloaded large weights are ignored.
+/config.local.json
+/config.local.json.tmp
+/installed/
+/cache/
+**/*.part
+**/*.part.*
+# Optional vision models are not standard Git payloads.
+/bundled/vision/
+# Tiny OCR + speech weights may be tracked under /bundled/ after verification.

@@ -1,0 +1,8 @@
+<!-- GATHERFORGE_REEL_PIPELINE_310 -->
+# GatherForge current release: v3.10 — Reel analysis, categorization and reviewed filing
+
+This is the authoritative current feature/status section. Older release notes below are kept for historical context; earlier statements that Reel inference is not implemented have been superseded by this source update (subject to Fedora build and live runtime verification).
+
+The Instagram Reel manifest now provides **Analyze Reel**, **Analyze all Reels**, **Approve & organize**, and an explicit Saved browser action **Unsave approved + organized Reels**. The app verifies each video and original URL, extracts available speech via whisper.cpp and screen text via English/Persian Tesseract, uses SmolVLM2 only when text evidence is insufficient and the optional runtime is installed, then calls native Rust Laya for category suggestions. An `analysis.json` sits next to each video and tracks success, unavailable stages and manual approval. Organized category folders use verified hard links; originals are never moved or deleted. No automatic unsaving occurs.
+
+Model files remain inside the project's `models/` folder. Optional inference *binaries* can be prepared from the in-app **Setup speech engine** / **Setup optional vision engine** buttons (requires Git, CMake, C++ compiler and internet on first use). Missing binaries are reported as unavailable, not silently treated as working. See [`docs/REEL_PIPELINE.md`](docs/REEL_PIPELINE.md) for implementation/safety details. This is a source update that must compile on Fedora; real inference and live Instagram UI remain unverified until tested there.

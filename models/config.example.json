@@ -1,0 +1,21 @@
+{
+  "schema_version": 3,
+  "storage_limit_mb": 1100,
+  "auto_download": true,
+  "speech_backend": "managed_local",
+  "speech_model": "tiny",
+  "speech_language": "auto",
+  "ocr_backend": "managed_local",
+  "vision_backend": "disabled",
+  "classification_backend": "laya_local",
+  "speech_custom_path": "",
+  "ocr_custom_path": "",
+  "vision_custom_path": "",
+  "classification_custom_path": "",
+  "api_endpoint": "",
+  "api_model": "",
+  "api_key_env": "GATHERFORGE_AI_API_KEY",
+  "send_private_media_to_api": false,
+  "auto_unsave": false,
+  "require_approval_before_unsave": true
+}

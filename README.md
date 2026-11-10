@@ -1,68 +1,54 @@
-# GatherForge 3.2 — Collection Studio
+# GatherForge
 
-A native desktop toolkit for collecting, reviewing, organizing and publishing audio safely.
+GatherForge is a native Rust/egui desktop app for managing a music library and reviewing saved Instagram Reels. The current source snapshot is **v3.10**. It is a project/source archive, not a verified machine backup or a guarantee that optional runtimes are installed.
 
-- **Engine:** Rust (`library.rs`, `downloader.rs`, `model.rs`); no Python or Go runtime.
-- **UI:** egui/eframe native window, **not** a browser or localhost web server.
-- **Design:** reusable `src/components` and documented `docs` design/engineering rules.
-- **Downloads:** single tracks, playlists or batches via external yt-dlp, saved in `_Incoming`; best available format by default.
-- **Library:** recursive scan, embedded metadata when present, first artist, duplicate review, editable names, group merging, owned staging, verified publishing, and Excel reports.
+## Start here
 
-## Linux development
+- [Current capabilities and verification status](#current-status)
+- [Build and run](#build-and-run)
+- [Documentation map](#documentation-map)
+- [Privacy and safe use](#privacy-and-safe-use)
+
+## Current status
+
+Reel intelligence includes optional speech recognition and OCR stages, with distributed frame sampling and English/Arabic/Persian OCR. Your local project can be located at `/mnt/shared/Projects/MusicOrganizer`.
+
+The source includes music scanning, review/staging/publish workflows, download queues, a Reel manifest and analysis/approval workflow, and project-local model management. Reel analysis is implemented in source: it records available and unavailable ASR/OCR/vision stages, combines text evidence for local Laya suggestions, and keeps category approval separate from model suggestions. Organizing uses verified hard links and preserves originals. Unsave is an explicit user action gated by human approval, matching media SHA-256 and verified organization.
+
+**Verification is incomplete.** This snapshot has not been verified here with a Fedora release build, real local inference across the supported engines, or the live Instagram browser flow. Engine binaries may need to be prepared from Settings and required source-build tools/network access. Missing engines should be reported as unavailable. Treat suggestions as unverified until you validate the build and a live run on the target machine; do not infer working inference from the presence of model weights.
+
+The canonical model directory is `<repo>/models/`, adjacent to `GatherForge-Rust-Linux`. Do not create a second active model store under `~/.local/share/gatherforge/`. See [model storage](docs/MODEL_STORAGE.md) and [AI model policy](docs/AI_MODEL_POLICY.md).
+
+## Build and run
+
+On Linux, install Rust and the native development libraries required by eframe, then:
 
 ```bash
-source "$HOME/.cargo/env"
 cargo fmt --all -- --check
 cargo test
 cargo build --release
 ./target/release/gatherforge
 ```
 
-Requires development packages for native window support on Linux. The program looks for `yt-dlp` beside the executable or on `PATH`. FFmpeg is only needed when converting to MP3.
+The installed launcher may point to the repository's `GatherForge-Rust-Linux`; see [model storage](docs/MODEL_STORAGE.md). `yt-dlp` is required for supported downloads and must be available beside the executable or on `PATH`. FFmpeg is needed only for audio conversion. Optional Reel engines have separate setup requirements described in [Reel pipeline](docs/REEL_PIPELINE.md).
 
-## Safe library workflow
+## Documentation map
 
-Select the **music library**, not this source repository. Scan → review → stage → export review report → publish → finalize after verifying files. Original music is never deleted during scanning or publishing. Finalization explicitly deletes only successfully verified staged copies; unapproved files are retained separately.
+| Topic | Guide |
+| --- | --- |
+| App workflows | [Workspaces](docs/WORKSPACES.md) |
+| Reel analysis, approval and unsave gate | [Reel pipeline](docs/REEL_PIPELINE.md) |
+| Local Laya classifier and limits | [Laya](docs/LAYA.md) |
+| Model paths, downloads and Git rules | [Model storage](docs/MODEL_STORAGE.md), [AI model policy](docs/AI_MODEL_POLICY.md) |
+| Visual and component constraints | [Design rules](docs/DESIGN_RULES.md), [design system](docs/DESIGN_SYSTEM.md), [components](docs/COMPONENTS.md) |
+| Release, migration and privacy | [Safety and release](docs/SAFETY_AND_RELEASE.md), [Privacy](PRIVACY.md) |
 
-## Project structure
+## Privacy and safe use
 
-```text
-src/
-  main.rs          # native desktop entry point
-  app.rs           # screens, interaction and commands
-  theme.rs         # all design tokens
-  components/      # reusable pure UI drawing elements
-  library.rs       # scanner / staging / reports
-  downloader.rs    # yt-dlp integration
-  model.rs, util.rs
+Keep media, browser cookies, private configuration, API secrets and downloaded optional weights out of Git. Reel classification suggestions are not approvals. Originals must remain in place, and unsaving must pass the documented review gate. See [Privacy](PRIVACY.md) and [Safety and release](docs/SAFETY_AND_RELEASE.md).
 
-docs/              # visual rules, component catalog, safety, references
-scripts/           # release builds and safe migration
-.github/workflows/ # cross-platform CI
-```
+## Permanent project requirements
 
-## Migration from the previous Go/Python and initial Rust preview
-
-Do not erase `.git` or your music directories. The included `scripts/install_into_repo.sh` checks the Git repository identity and working tree, backs up any local uncommitted Rust preview, imports the new source, builds/tests, and commits/pushes only after successful checks. No force push.
-
-If your current project has an active staged/published batch, finish or restore it **in the current version** before migrating the file engine. New projects read legacy state only when its ownership marker is present.
-
-## Privacy
-
-Do not add absolute device paths, credentials, browser cookies, downloaded music or audio metadata dumps to the public source. `docs/SAFETY_AND_RELEASE.md` and `.gitignore` explain the rules.
-
-## UI design skills
-
-This source includes a repository-specific Claude skill at `.claude/skills/gatherforge-ui/SKILL.md`. It summarizes the design principles adapted from Anthropic frontend-design, Impeccable, and better-ui. See `docs/DESIGN_SYSTEM.md` and `docs/COMPONENTS.md`. The full third-party skills are not vendored.
-
-## Install / update an existing repository
-
-From the extracted source, run `bash scripts/install_into_repo.sh /path/to/your/repository`. The installer backs up the local Rust prototype, compiles the new source, migrates tracked files, commits, tags and pushes only after passing checks. Do not migrate a currently staged batch before resolving it.
-
-## Install / update an existing repository
-
-From the extracted source, run `bash scripts/install_into_repo.sh /path/to/your/repository`. The installer backs up the local Rust prototype, compiles the new source, migrates tracked files, commits, tags and pushes only after passing checks. Do not migrate a currently staged batch before resolving it.
-
-## Install / update an existing repository
-
-From the extracted source, run `bash scripts/install_into_repo.sh /path/to/your/repository`. The installer backs up the local Rust prototype, compiles the new source, migrates tracked files, commits, tags and pushes only after passing checks. Do not migrate a currently staged batch before resolving it.
+- The `GATHERFORGE_CORNER_RULE_V1` keeps app-owned corners at 2 px (strictly below 4 px), except for the requested 8 px music library cards and their artwork frames. See [Design Rules](docs/DESIGN_RULES.md).
+- The only managed model root is `<repo>/models/`.
+- Never describe optional inference or the live Instagram interaction as verified without a successful target-machine run.

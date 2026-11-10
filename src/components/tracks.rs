@@ -1,5 +1,7 @@
 use crate::theme;
-use eframe::egui::{self, Align2, Color32, FontId, RichText, Stroke, Vec2};
+use eframe::egui::{self, Align2, Color32, FontId, Stroke, Vec2};
+
+const MUSIC_CARD_RADIUS: f32 = 8.0;
 
 fn swatch(artist: &str) -> Color32 {
     let hash = artist
@@ -14,107 +16,36 @@ fn swatch(artist: &str) -> Color32 {
     }
 }
 
+fn truncate(text: &str, columns: usize) -> String {
+    if text.chars().count() <= columns {
+        return text.to_owned();
+    }
+    let mut out: String = text.chars().take(columns.saturating_sub(1)).collect();
+    out.push('…');
+    out
+}
+
 pub fn track_row(
-    ui: &mut egui::Ui,
-    artist: &str,
-    title: &str,
-    format: &str,
-    status: &str,
-    selected: bool,
-    duplicate: bool,
+    ui: &mut egui::Ui, artist: &str, title: &str, format: &str,
+    status: &str, selected: bool, duplicate: bool, artwork: Option<&egui::TextureHandle>,
 ) -> bool {
-    let width = ui.available_width();
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 63.0), egui::Sense::click());
+    let width = ui.available_width().max(1.0);
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 202.0), egui::Sense::click());
     let p = ui.painter();
-    if selected || response.hovered() {
-        p.rect_filled(
-            rect,
-            8.0,
-            if selected {
-                Color32::from_rgb(229, 232, 242)
-            } else {
-                theme::SURFACE
-            },
-        );
-    }
-    let art = egui::Rect::from_min_size(rect.left_top() + Vec2::new(11.0, 8.0), Vec2::splat(46.0));
-    let center = art.center();
-    p.rect_filled(art, 8.0, swatch(artist));
-    p.circle_stroke(
-        center,
-        14.0,
-        Stroke::new(1.0, Color32::from_white_alpha(130)),
-    );
-    p.circle_stroke(
-        center,
-        9.0,
-        Stroke::new(1.0, Color32::from_white_alpha(110)),
-    );
-    p.circle_filled(center, 3.0, Color32::WHITE);
-    let x = rect.left() + 70.0;
-    let visible_width = (rect.right() - x - 170.0).max(70.0);
-    let max_chars = (visible_width / 7.2).floor().max(8.0) as usize;
-    let mut title = title.to_owned();
-    if title.chars().count() > max_chars {
-        title = title
-            .chars()
-            .take(max_chars.saturating_sub(1))
-            .collect::<String>()
-            + "…";
-    }
-    let mut artist = artist.to_owned();
-    if artist.chars().count() > max_chars {
-        artist = artist
-            .chars()
-            .take(max_chars.saturating_sub(1))
-            .collect::<String>()
-            + "…";
-    }
-    p.text(
-        egui::pos2(x, rect.top() + 14.0),
-        Align2::LEFT_TOP,
-        title,
-        FontId::proportional(13.0),
-        theme::WHITE,
-    );
-    p.text(
-        egui::pos2(x, rect.top() + 35.0),
-        Align2::LEFT_TOP,
-        artist,
-        FontId::proportional(11.0),
-        theme::MUTED,
-    );
-    if width > 540.0 {
-        p.text(
-            egui::pos2(rect.right() - 115.0, rect.center().y),
-            Align2::RIGHT_CENTER,
-            format.to_uppercase(),
-            FontId::proportional(10.5),
-            theme::MUTED,
-        );
-    }
-    let tint = if duplicate {
-        theme::CORAL
-    } else if status == "Keep" {
-        theme::LAVENDER
+    let fill = if selected || response.hovered() { theme::glass_hover() } else { theme::surface() };
+    p.rect_filled(rect, MUSIC_CARD_RADIUS, fill);
+    let art = egui::Rect::from_min_size(rect.left_top() + Vec2::splat(10.0), Vec2::new((width - 20.0).max(1.0), 110.0));
+    p.rect_filled(art, MUSIC_CARD_RADIUS, swatch(artist));
+    if let Some(texture) = artwork {
+        p.image(texture.id(), art, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
     } else {
-        theme::MUTED
-    };
-    p.text(
-        egui::pos2(rect.right() - 13.0, rect.center().y),
-        Align2::RIGHT_CENTER,
-        if duplicate { "Review" } else { status },
-        FontId::proportional(11.5),
-        tint,
-    );
-    p.line_segment(
-        [
-            rect.left_bottom() + Vec2::new(11.0, -1.0),
-            rect.right_bottom() + Vec2::new(-11.0, -1.0),
-        ],
-        Stroke::new(0.6, theme::STROKE),
-    );
-    response
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .clicked()
+        p.circle_stroke(art.center(), 30.0, Stroke::new(2.0, Color32::from_white_alpha(160)));
+        p.circle_filled(art.center(), 4.0, Color32::WHITE);
+    }
+    let chars = ((width - 20.0).max(1.0) / 7.2) as usize;
+    p.text(rect.left_top() + Vec2::new(10.0, 128.0), Align2::LEFT_TOP, truncate(title, chars), FontId::proportional(14.0), theme::white());
+    p.text(rect.left_top() + Vec2::new(10.0, 149.0), Align2::LEFT_TOP, truncate(artist, chars), FontId::proportional(12.0), theme::muted());
+    let label = if duplicate { "Review match" } else { status };
+    p.text(rect.left_top() + Vec2::new(10.0, 175.0), Align2::LEFT_TOP, format!("{}  ·  {}", format.to_uppercase(), label), FontId::proportional(10.5), if duplicate { theme::coral() } else { theme::lavender() });
+    response.on_hover_text(if artwork.is_some() { "Select to review track details" } else { "Select to review track details; generated artwork placeholder" }).on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
 }

@@ -18,3 +18,9 @@
 - Potential duplicate: can I inspect before publishing?
 - Publish: is staging preserved?
 - Small window: are controls still reachable?
+
+
+## V3.3 interface constraint
+Use theme::RADIUS (2 px) for rectangular widgets except music track cards and artwork frames, which use 8 px; other radii stay strictly below 4 px
+(GATHERFORGE_CORNER_RULE_V1 in `AGENTS.md`). Use the 36 px control, 40 px navigation and
+58 px track-row scale from `src/theme.rs`; keep grids aligned and avoid independent width hacks.

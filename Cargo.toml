@@ -1,6 +1,6 @@
 [package]
 name = "gatherforge"
-version = "3.2.0"
+version = "3.10.0"
 edition = "2024"
 authors = ["GatherForge contributors"]
 description = "Native Rust desktop toolkit for downloading and organizing media"
@@ -17,6 +17,11 @@ rust_xlsxwriter = "0.102"
 rfd = "0.15"
 dirs = "6"
 url = "2.5"
+ureq = { version = "=2.12.1", default-features = true }
+sha2 = "0.10"
+sha1 = "0.10"
+# Native, in-process CPU Laya inference. No Python/ONNX exporter or server.
+laya = "=0.1.1"
 
 [profile.release]
 lto = "thin"

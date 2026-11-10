@@ -19,3 +19,10 @@ Inspiration and design references:
 - https://github.com/anthropics/skills/tree/main/skills/frontend-design
 - https://github.com/pbakaus/impeccable
 - https://github.com/jakubkrehel/skills/tree/main/skills/better-ui
+
+
+## V3.3 interface constraint
+Use theme::RADIUS (2 px) for every rectangular widget; every radius must remain strictly below
+4 px (GATHERFORGE_CORNER_RULE_V1 in `AGENTS.md`, enforced by `tests/test_design_radius.py`).
+Use the 36 px control, 40 px navigation and 58 px track-row constants from `src/theme.rs`; keep
+grids aligned and avoid independent width hacks.

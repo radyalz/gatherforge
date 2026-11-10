@@ -100,26 +100,13 @@ fn build_command(root: &Path, settings: &DownloadSettings) -> Result<Command> {
     fs::create_dir_all(archive.parent().unwrap()).map_err(err)?;
     fs::create_dir_all(root.join("_Incoming")).map_err(err)?;
     let mut cmd = Command::new(tool);
-    cmd.arg("--ignore-config")
-        .arg("--newline")
-        .arg("--continue")
-        .arg("--no-overwrites")
-        .arg("--ignore-errors")
-        .arg("--download-archive")
-        .arg(archive)
-        .arg("-P")
-        .arg(root.join("_Incoming"))
-        .arg("-o")
-        .arg("%(artist,uploader)s - %(title)s [%(id)s].%(ext)s")
-        .arg("--extractor-args")
-        .arg("soundcloud:formats=*")
-        .arg(if settings.single {
-            "--no-playlist"
-        } else {
-            "--yes-playlist"
-        })
-        .arg("-f")
-        .arg("bestaudio/best");
+    cmd.arg("--ignore-config").arg("--newline").arg("--continue").arg("--no-overwrites").arg("--ignore-errors")
+       .arg("--download-archive").arg(archive).arg("-P").arg(root.join("_Incoming"))
+       .arg("-o").arg("%(artist,uploader)s - %(title)s [%(id)s].%(ext)s")
+       .arg("--progress-template").arg("download:GF_PROGRESS:%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s")
+       .arg("--extractor-args").arg("soundcloud:formats=*")
+       .arg(if settings.single {"--no-playlist"}else{"--yes-playlist"})
+       .arg("-f").arg("bestaudio/best");
     if settings.convert_mp3 {
         cmd.args(["-x", "--audio-format", "mp3", "--audio-quality", "0"]);
     }
