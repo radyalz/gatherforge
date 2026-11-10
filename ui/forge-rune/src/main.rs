@@ -3,7 +3,7 @@
 //! No mock rows, no fake download progress, no invented transcripts.
 use std::{borrow::Cow, collections::{BTreeMap,HashMap}, fs, path::{Path, PathBuf}, sync::{mpsc::{self, Receiver}, OnceLock}, process::Command, thread, time::{Duration,Instant}};
 use rune::{AppSpec, Color, Cx, El, Image, ImageCache, Player, PlayerState, ScrollSpec, Shape, TextEdit, Tx, Waker, canvas, col, el, row, text};
-use rune_kit::{Cell, Kit, PaletteSeed, Table, TableColumn, TableState, TextInput};
+use rune_kit::{Cell, Kit, PaletteSeed, Table, TableColumn, TableState, TableStyle, TextInput};
 use serde_json::Value;
 
 #[path = "../../../src/model.rs"] mod model;
@@ -348,42 +348,100 @@ fn label(t:impl Into<String>,p:Paint)->El{text(t).color(p.ink)}
 fn dim(t:impl Into<String>,p:Paint)->El{text(t).color(p.muted)}
 fn heading(t:impl Into<String>,p:Paint)->El{text(t).font(rune::tok::type_::TITLE).color(p.ink)}
 fn rule(p:Paint)->El{el().h(1.0).w_full().fill(p.line)}
+// Forge chrome is composed from vector polygons, not rectangular borders and triangular stickers.
+// All decoration is drawn behind the active elements, so controls remain native Rune controls.
+fn forge_shell(surface:Color,p:Paint,signal:bool)->Shape {
+    let rim=if signal{p.red}else{p.brass};
+    let edge=if signal{p.brass}else{p.red};
+    Shape::new()
+        .fill(vec![[0.,20.],[20.,0.],[976.,0.],[1000.,22.],[1000.,979.],[980.,1000.],[20.,1000.],[0.,982.]],rim)
+        .fill(vec![[2.,21.],[21.,2.],[975.,2.],[998.,23.],[998.,978.],[979.,998.],[21.,998.],[2.,981.]],surface)
+        .stroke(vec![[22.,4.],[193.,4.],[216.,12.],[391.,12.]],2.8,p.red)
+        .stroke(vec![[22.,10.],[150.,10.]],0.65,p.brass)
+        .stroke(vec![[743.,989.],[971.,989.],[990.,972.]],1.8,p.brass)
+        .stroke(vec![[3.,180.],[3.,780.]],1.1,edge)
+        .stroke(vec![[997.,115.],[997.,884.]],1.0,p.line)
+        .fill(vec![[920.,995.],[934.,995.],[948.,976.],[936.,976.]],p.red)
+        .fill(vec![[940.,995.],[954.,995.],[968.,976.],[956.,976.]],p.red)
+}
+fn frame_cap(p:Paint,right:bool)->El {
+    let glyph=if right{
+        Shape::new()
+            .fill(vec![[0.,0.],[16.,0.],[26.,10.],[10.,10.]],p.brass)
+            .stroke(vec![[1.,8.],[17.,8.],[23.,10.]],1.0,p.red)
+    }else{
+        Shape::new()
+            .fill(vec![[10.,0.],[126.,0.],[116.,10.],[0.,10.]],p.red)
+            .stroke(vec![[10.,8.],[86.,8.]],1.3,p.brass)
+    };
+    canvas(glyph).size(if right{26.0}else{126.0},10.0)
+}
 fn chip(t:impl Into<String>,p:Paint,active:bool)->El{
-    row().h(24.0).px(9.0).center_y().radius(1.0)
-        .fill(if active{p.red_dim}else{hex("#180E10")})
-        .border(1.0,if active{p.red}else{p.line})
+    let surface=if active{hex("#8D1120")}else{p.pane2};
+    let rim=if active{p.red}else{p.line};
+    let shape=Shape::new()
+        .fill(vec![[0.,0.],[92.,0.],[100.,8.],[100.,24.],[0.,24.]],rim)
+        .fill(vec![[1.,1.],[91.,1.],[99.,9.],[99.,23.],[1.,23.]],surface)
+        .stroke(vec![[3.,2.],[30.,2.]],1.2,if active{p.brass}else{p.red_dim});
+    row().h(25.0).gap(4.0).center_y().fill(Color::TRANSPARENT)
+        .child(canvas(shape.view_box(100.,24.)).w_full().h_full().absolute(0.,0.))
+        .child(el().w(8.0))
         .child(text(t).font(rune::tok::type_::LABEL).color(if active{p.ink}else{p.brass}))
+        .child(el().w(10.0))
 }
 fn action(t:impl Into<String>,p:Paint,primary:bool,press:impl Fn(&mut App)+'static)->El {
-    let fill=if primary{hex("#BD101C")}else{hex("#1A0B0E")};
-    row().h(32.0).gap(5.0).center_y().radius(1.0).fill(fill)
-        .border(1.0,if primary{p.red}else{p.brass})
-        .hover(if primary{p.red_dim}else{hex("#4B121A")})
+    let base=if primary{hex("#AD101E")}else{hex("#190D10")};
+    let rim=if primary{p.red}else{p.brass};
+    let plate=Shape::new()
+        .fill(vec![[0.,7.],[7.,0.],[91.,0.],[100.,9.],[100.,32.],[0.,32.]],rim)
+        .fill(vec![[2.,8.],[8.,2.],[90.,2.],[98.,10.],[98.,30.],[2.,30.]],base)
+        .fill(vec![[3.,4.],[8.,2.],[37.,2.],[32.,4.]],if primary{p.brass}else{p.red})
+        .stroke(vec![[4.,29.],[87.,29.]],0.9,p.red_dim);
+    row().h(33.0).min_w(50.0).gap(6.0).center_y().fill(Color::TRANSPARENT)
+        .child(canvas(plate.view_box(100.,32.)).w_full().h_full().absolute(0.,0.))
         .press_scale(0.98).focusable(true).on_press(press)
-        .child(el().w(4.0).h(16.0).fill(if primary{hex("#FF8581")}else{p.brass}))
+        .child(el().w(10.0).h(14.0).child(el().w(2.0).h(12.0).fill(if primary{p.brass}else{p.red})))
         .child(text(t).font(rune::tok::type_::LABEL).color(p.ink))
-        .child(el().w(9.0).h(31.0).shape(Shape::new().fill(vec![[0.,0.],[9.,0.],[9.,21.],[0.,31.]],if primary{p.red_dim}else{p.pane2})))
+        .child(el().w(12.0))
 }
 fn panel(title:&str, subtitle:&str,p:Paint,child:El)->El{
     let icon=match title{
-        "MEDIA LIBRARY"=>"◈", "REEL STUDIO"=>"⬡", "MUSIC CATEGORIZER"=>"♫", "DOWNLOADER"=>"⇩", _=>"◆"};
-    col().key(format!("panel-{title}")).grow(1.0).min_h(0.0).min_w(0.0)
-        .fill(p.pane).border(1.0,p.brass).radius(0.0)
-        .child(row().w_full().h(5.0).gap(0.0)
-            .child(canvas(Shape::new().fill(vec![[0.,0.],[110.,0.],[100.,5.],[0.,5.]],p.red).view_box(110.0,5.0)).w(110.0).h(5.0))
-            .child(el().grow(1.0).h(1.0).fill(p.line))
-            .child(el().w(18.0).h(4.0).fill(p.brass)))
-        .child(row().h(56.0).px(13.0).gap(10.0).center_y().fill(hex("#16080C"))
-            .child(col().size(36.0,36.0).radius(2.0).border(1.0,p.brass).center()
-                .child(text(icon).font(rune::tok::type_::TITLE).color(p.brass)))
-            .child(col().gap(3.0).grow(1.0)
-                .child(heading(title.to_string(),p))
-                .child(dim(subtitle.to_string(),p)))
-            .child(el().w(16.0).h(28.0).shape(Shape::new().stroke(vec![[0.,26.],[16.,10.]],1.5,p.red))))
-        .child(rule(p))
-        .child(child.grow(1.0).min_h(0.0).min_w(0.0))
-        .child(row().h(3.0).w_full().gap(0.0)
-            .child(el().w(26.0).fill(p.red)).child(el().grow(1.0).h(1.0).fill(p.line)).child(el().w(36.0).h(2.0).fill(p.brass)))
+        "MEDIA LIBRARY"=>"◇", "REEL STUDIO"=>"⬡", "MUSIC CATEGORIZER"=>"♫",
+        "DOWNLOADER"=>"↓", "DOWNLOAD QUEUE"=>"↓", "AI MODEL CENTER"=>"⬡", _=>"◆"};
+    let display=match title{
+        "MEDIA LIBRARY"=>"Media Library", "REEL STUDIO"=>"Reel Studio",
+        "MUSIC CATEGORIZER"=>"Music Categorizer", "DOWNLOADER"=>"Downloader",
+        "DOWNLOAD QUEUE"=>"Download Queue", "AI MODEL CENTER"=>"AI Model Center",
+        "FORGE SETTINGS"=>"Forge Settings", _=>title};
+    let frame=forge_shell(p.pane,p,true).view_box(1000.,1000.);
+    el().key(format!("panel-{title}")).grow(1.0).min_h(0.0).min_w(0.0).fill(p.bg)
+        .child(canvas(frame).w_full().h_full().absolute(0.,0.))
+        .child(col().w_full().h_full().padding(7.0).gap(0.0).min_h(0.0).min_w(0.0)
+            .child(row().h(10.0).w_full().center_y().gap(0.0)
+                .child(frame_cap(p,false))
+                .child(el().grow(1.0).h(1.0).fill(p.line))
+                .child(frame_cap(p,true)))
+            .child(row().h(52.0).px(12.0).gap(11.0).center_y().fill(p.pane)
+                .child(el().size(37.0,37.0).fill(Color::TRANSPARENT)
+                    .child(canvas(Shape::new()
+                        .fill(vec![[18.,0.],[36.,9.],[36.,28.],[18.,37.],[0.,28.],[0.,9.]],p.brass)
+                        .fill(vec![[18.,2.],[34.,10.],[34.,27.],[18.,35.],[2.,27.],[2.,10.]],p.pane2)
+                        .stroke(vec![[2.,27.],[18.,35.],[34.,27.]],1.0,p.red)).size(37.0,37.0).absolute(0.,0.))
+                    .center().child(text(icon).font(rune::tok::type_::TITLE).color(p.brass)))
+                .child(col().grow(1.0).gap(3.0)
+                    .child(heading(display.to_string(),p))
+                    .child(dim(subtitle.to_string(),p)))
+                .child(canvas(Shape::new().stroke(vec![[0.,30.],[16.,14.],[20.,14.]],1.5,p.red)
+                    .stroke(vec![[6.,34.],[23.,17.]],0.75,p.brass)).size(26.0,37.0)))
+            .child(row().h(3.0).w_full().gap(0.0)
+                .child(el().w(89.0).h(2.0).fill(p.red))
+                .child(el().grow(1.0).h(1.0).fill(p.line))
+                .child(el().w(32.0).h(2.0).fill(p.brass)))
+            .child(child.grow(1.0).min_h(0.0).min_w(0.0))
+            .child(row().h(6.0).w_full().gap(0.0)
+                .child(el().w(48.0).h(2.0).fill(p.brass))
+                .child(el().grow(1.0).h(1.0).fill(p.line))
+                .child(el().w(82.0).h(2.0).fill(p.red))))
 }
 fn nav_glyph(page:Page,p:Paint)->El {
     let color=p.brass;
@@ -401,35 +459,49 @@ fn nav_glyph(page:Page,p:Paint)->El {
 }
 fn tab(t:&str,page:Page,s:&App,p:Paint)->El{
     let active=s.page==page;
-    row().key(format!("nav-{}",page.name())).h(42.0).w_full().center_y().gap(10.0)
-        .fill(if active{hex("#850810")}else{p.side})
-        .border(if active{1.0}else{0.0},if active{p.red}else{p.side})
-        .hover(hex("#4D1017")).focusable(true).on_press(move|state:&mut App|state.switch(page))
-        .child(el().w(4.0).h(40.0).fill(if active{p.red}else{p.side}))
+    let surface=if active{hex("#8C0D1B")}else{p.side};
+    let tab_shape=Shape::new()
+        .fill(vec![[0.,0.],[176.,0.],[194.,21.],[176.,42.],[0.,42.]],surface)
+        .stroke(if active{vec![[0.,0.],[176.,0.],[194.,21.],[176.,42.],[0.,42.]]}else{vec![[0.,41.],[176.,41.]]},
+            if active{1.7}else{0.7},if active{p.red}else{p.line})
+        .fill(vec![[0.,0.],[4.,0.],[4.,42.],[0.,42.]],if active{p.red}else{p.side})
+        .stroke(vec![[7.,4.],[40.,4.]],if active{1.4}else{0.5},if active{p.brass}else{p.line});
+    row().key(format!("nav-{}",page.name())).h(43.0).w_full().gap(10.0).center_y().fill(Color::TRANSPARENT)
+        .child(canvas(tab_shape.view_box(194.,42.)).w_full().h_full().absolute(0.,0.))
+        .focusable(true).on_press(move|state:&mut App|state.switch(page))
+        .child(el().w(10.0))
         .child(nav_glyph(page,p))
         .child(text(t).color(if active{p.ink}else{p.muted}).grow(1.0))
-        .child(if active{canvas(Shape::new().fill(vec![[0.,0.],[13.,20.],[0.,40.]],p.red_dim)).w(13.0).h(40.0)}else{el().w(13.0)})
+        .child(el().w(23.0))
 }
 fn sidebar(s:&App,p:Paint)->El{
-    let mut menu=col().key("sidebar").w(194.0).h_full().fill(hex("#090508")).border(1.0,p.line);
-    menu=menu.child(col().h(80.0).px(14.0).gap(4.0).center_y()
-        .child(row().gap(8.0).center_y()
-            .child(el().size(27.0,29.0).shape(Shape::new()
-                .fill(vec![[14.,0.],[27.,7.],[27.,22.],[14.,29.],[0.,22.],[0.,7.]],p.red))
-                .center().child(text("G").color(p.ink)))
-            .child(text("GatherForge").font(rune::tok::type_::TITLE).color(p.ink)))
-        .child(text("FORGE / MEDIA COMMAND").color(p.brass)));
-    menu=menu.child(rule(p));
+    let background=forge_shell(p.side,p,false).view_box(1000.,1000.);
+    let mut menu=col().h_full().w_full().padding(8.0).gap(3.0).min_h(0.0)
+        .child(col().h(83.0).px(10.0).gap(4.0).center_y()
+            .child(row().gap(9.0).center_y()
+                .child(if let Some(img)=s.emblem.as_ref(){el().size(49.0,49.0).pixels(img.pixels())}else{
+                    el().size(49.0,49.0).fill(p.red_dim).center().child(text("G").color(p.brass))})
+                .child(col().gap(4.0)
+                    .child(text("GatherForge").font(rune::tok::type_::TITLE).color(p.ink))
+                    .child(text("FORGE EDITION").font(rune::tok::type_::LABEL).color(p.red))))
+            .child(text("FORGE ENGINE  /  MEDIA COMMAND").color(p.brass)))
+        .child(row().h(5.0).w_full()
+            .child(el().w(49.0).h(2.0).fill(p.red))
+            .child(el().grow(1.0).h(1.0).fill(p.line)));
     let menus=[(Page::Workspace,"Workspace"),(Page::Media,"Media Library"),(Page::Reels,"Reel Studio"),
         (Page::Music,"Music Categorizer"),(Page::Downloader,"Downloader"),(Page::Models,"AI Model Center"),
         (Page::Queue,"Tasks & Queue"),(Page::Settings,"Settings")];
     for (page,title) in menus {menu=menu.child(tab(title,page,s,p));}
     menu=menu.child(el().grow(1.0));
-    if let Some(image)=s.anvil.as_ref(){menu=menu.child(el().h(168.0).w_full().pixels(image.pixels()));}
-    menu.child(col().padding(10.0).gap(5.0).fill(hex("#11070A"))
-        .child(rule(p)).child(text("LOCAL-FIRST / PRIVATE").color(p.brass))
+    if let Some(img)=s.anvil.as_ref(){menu=menu.child(el().h(161.0).w_full().pixels(img.pixels()));}
+    menu=menu.child(col().gap(5.0).padding(8.0).fill(p.pane2)
+        .child(row().h(2.0).child(el().w(48.0).h(2.0).fill(p.red)).child(el().grow(1.0).h(1.0).fill(p.line)))
+        .child(text("LOCAL-FIRST / PRIVATE").color(p.brass))
         .child(dim(format!("{} tracks  /  {} reels",s.lib.tracks.len(),s.reels.len()),p))
-        .child(dim(format!("{} active operations",s.queue.active_count()),p)))
+        .child(dim(format!("{} active operations",s.queue.active_count()),p)));
+    el().key("sidebar").w(215.0).h_full().fill(p.bg)
+        .child(canvas(background).w_full().h_full().absolute(0.,0.))
+        .child(menu)
 }
 fn meter(caption:&str,value:String,ratio:f32,p:Paint)->El {
     col().gap(3.0).w(81.0)
@@ -439,25 +511,36 @@ fn meter(caption:&str,value:String,ratio:f32,p:Paint)->El {
 }
 fn header(s:&App,p:Paint)->El{
     let k=kit(s.dark);
-    let mut r=row().key("command-bar").w_full().h(73.0).fill(p.side)
-        .border(1.0,p.line).gap(12.0).center_y();
-    // Background is decorative only. Overlay is out of flow and paints behind the controls.
+    let mut r=row().key("command-bar").w_full().h(76.0).fill(p.bg)
+        .gap(12.0).center_y();
     if let Some(texture)=s.metal.as_ref(){
-        r=r.child(el().w_full().h_full().pixels(texture.pixels()).absolute(0.0,0.0));
+        r=r.child(el().w_full().h_full().pixels(texture.pixels()).absolute(0.,0.));
     }
-    // The emblem and industrial texture are decorative; search and metrics are live.
-    let brand=row().w(269.0).h_full().center_y().gap(8.0).fill(hex("#11070A"))
+    let silhouette=Shape::new()
+        .stroke(vec![[0.,74.],[212.,74.],[238.,12.],[270.,2.],[810.,2.],[832.,12.]],1.4,p.red)
+        .stroke(vec![[863.,4.],[1090.,4.],[1112.,30.],[1640.,30.]],1.0,p.brass)
+        .stroke(vec![[230.,69.],[800.,69.]],2.5,p.red)
+        .stroke(vec![[1090.,73.],[1610.,73.]],1.5,p.red);
+    r=r.child(canvas(silhouette.view_box(1640.,76.)).w_full().h_full().absolute(0.,0.));
+    let brand=row().w(271.0).h_full().center_y().gap(7.0).fill(Color::TRANSPARENT)
         .child(if let Some(emblem)=&s.emblem{el().w(74.0).h(68.0).pixels(emblem.pixels())}else{el().w(74.0).h(68.0)})
-        .child(col().gap(3.0)
+        .child(col().gap(4.0)
             .child(text("GatherForge").font(rune::tok::type_::TITLE).color(p.ink))
             .child(text("Forge Your Media").color(p.red)))
-        .child(canvas(Shape::new().stroke(vec![[0.,70.],[24.,0.]],2.0,p.red)).w(24.0).h(70.0));
+        .child(canvas(Shape::new().stroke(vec![[0.,72.],[26.,1.]],2.0,p.red)
+            .stroke(vec![[3.,72.],[24.,12.]],0.9,p.brass)).size(27.0,72.0));
     r=r.child(brand);
-    r=r.child(row().h(48.0).w(420.0).gap(7.0).center_y().fill(hex("#17080C")).border(1.0,p.red)
-        .child(canvas(Shape::new().stroke(vec![[3.,8.],[7.,4.],[12.,8.]],2.0,p.brass)).size(18.0,18.0))
-        .child(TextInput::new(&s.search).placeholder("Search tracks, Reels, queued jobs...").width(None).plain()
+    let input_plate=Shape::new()
+        .fill(vec![[0.,0.],[95.,0.],[100.,10.],[100.,48.],[4.,48.],[0.,43.]],p.red)
+        .fill(vec![[0.6,1.],[94.,1.],[99.,10.],[99.,46.],[4.5,46.],[1.,42.]],hex("#0C0608"))
+        .stroke(vec![[6.,3.],[58.,3.]],1.2,p.brass);
+    r=r.child(row().h(48.0).w(426.0).gap(8.0).center_y().fill(Color::TRANSPARENT)
+        .child(canvas(input_plate.view_box(100.,48.)).w_full().h_full().absolute(0.,0.))
+        .child(el().w(12.0))
+        .child(canvas(Shape::new().stroke(vec![[3.,8.],[6.,5.],[9.,8.]],2.0,p.brass)).size(17.0,17.0))
+        .child(TextInput::new(&s.search).placeholder("Search library, Reels, or jobs…  Ctrl+K").width(None).plain()
             .on_edit(|s:&mut App|&mut s.search).on_change(|s:&mut App,_|s.recompute()).build(k).grow(1.0))
-        .child(el().w(12.0).h(48.0).shape(Shape::new().fill(vec![[0.,48.],[12.,24.],[12.,48.]],p.red_dim))));
+        .child(el().w(20.0)));
     r=r.child(el().grow(1.0));
     r=r.child(meter("CPU",format!("{:.0}%",s.cpu),s.cpu/100.0,p));
     r=r.child(meter("GPU","—".into(),0.0,p));
@@ -466,7 +549,7 @@ fn header(s:&App,p:Paint)->El{
     r=r.child(chip(format!("{} ACTIVE",s.queue.active_count()),p,s.queue.has_active()));
     r=r.child(action("SETTINGS",p,false,|s|s.switch(Page::Settings)));
     r.child(action(if s.dark{"LIGHT"}else{"DARK"},p,false,|s|s.dark=!s.dark))
-        .child(el().w(3.0))
+        .child(el().w(12.0))
 }
 fn status(s:&App,p:Paint)->El{
     row().key("status-bar").h(28.0).w_full().px(14.0).gap(14.0).center_y()
@@ -477,14 +560,38 @@ fn status(s:&App,p:Paint)->El{
         .child(dim(format!("{} QUEUED",s.queue.queued_count()),p))
         .child(el().grow(1.0))
         .child(text(s.notice.clone().chars().take(115).collect::<String>()).color(p.muted))
-        .child(text("///  FORGE / BUILD / ORGANIZE").color(p.red))
+        .child(canvas(Shape::new()
+            .fill(vec![[0.,18.],[10.,18.],[26.,0.],[16.,0.]],p.red)
+            .fill(vec![[17.,18.],[27.,18.],[43.,0.],[33.,0.]],p.red)
+            .fill(vec![[34.,18.],[44.,18.],[60.,0.],[50.,0.]],p.red)).size(65.0,18.0))
+        .child(text("FORGE / BUILD / ORGANIZE").color(p.red))
 }
 fn thumb(s:&App,key:&str,p:Paint,w:f32,h:f32)->El {
     if let Some(img)=s.thumbs.get(key) {
-        return el().size(w,h).fill(p.pane2).pixels(img.pixels()).border(1.0,p.line);
+        return el().size(w,h).fill(p.pane2).pixels(img.pixels()).border(1.0,p.brass);
     }
-    el().size(w,h).fill(hex("#381218")).border(1.0,p.line).center()
-        .child(text("♫").font(rune::tok::type_::TITLE).color(p.brass))
+    // A geometric, non-pretend fallback for tracks without embedded cover artwork.
+    let icon=if key.starts_with("reel:"){"▶"}else{"♫"};
+    el().size(w,h).fill(hex("#220B0F"))
+        .child(canvas(Shape::new()
+            .fill(vec![[0.,6.],[6.,0.],[93.,0.],[100.,7.],[100.,93.],[93.,100.],[6.,100.],[0.,93.]],p.line)
+            .fill(vec![[3.,7.],[7.,3.],[92.,3.],[97.,8.],[97.,92.],[92.,97.],[7.,97.],[3.,92.]],hex("#240E13"))
+            .stroke(vec![[9.,11.],[57.,11.]],1.0,p.red)
+            .view_box(100.,100.)).w_full().h_full().absolute(0.,0.))
+        .center().child(text(icon).font(rune::tok::type_::TITLE).color(p.brass))
+}
+fn forge_table_style(p:Paint,k:&Kit)->TableStyle {
+    let mut style=TableStyle::from_kit(k);
+    style.row_height=34.0;
+    style.header_height=33.0;
+    style.cell_pad=9.0;
+    style.rule=p.line;
+    style.text=p.ink;
+    style.muted=p.muted;
+    style.header_text=p.brass;
+    style.selected=p.red_dim;
+    style.stripe=hex("#180C10");
+    style
 }
 fn media_table(s:&App,p:Paint,small:bool)->El{
     let k=kit(s.dark);
@@ -527,7 +634,7 @@ fn media_table(s:&App,p:Paint,small:bool)->El{
                 dir.apply(key(a).to_lowercase().cmp(&key(b).to_lowercase()))
             });
         })
-        .zebra(true).build(s,k).grow(1.0).min_h(0.0);
+        .style(forge_table_style(p,k)).zebra(true).build(s,k).grow(1.0).min_h(0.0);
     col().gap(8.0).padding(if small{7.0}else{12.0}).min_h(0.0).grow(1.0)
         .child(row().gap(6.0).center_y()
             .child(chip(format!("{} FILES",s.media_rows.len()),p,false))
@@ -664,7 +771,9 @@ fn reels_panel(s:&App,p:Paint,small:bool)->El{
             })));
         out=out.child(row().gap(8.0).grow(1.0).min_h(0.0)
             .child(player(s,p).grow(1.5))
-            .child(col().w(180.0).grow(0.5).min_h(0.0).fill(p.pane2).border(1.0,p.line).child(reel_evidence(s,p))));
+            .child(col().w(180.0).grow(0.5).min_h(0.0) .fill(Color::TRANSPARENT)
+                .child(canvas(forge_shell(p.pane2,p,false).view_box(1000.,1000.)).w_full().h_full().absolute(0.,0.))
+                .child(reel_evidence(s,p))));
         out.child(filmstrip(s,p,true))
     }else{
         out=out.child(row().gap(6.0).h(32.0)
@@ -678,7 +787,9 @@ fn reels_panel(s:&App,p:Paint,small:bool)->El{
             .child(col().w(182.0).gap(5.0).min_h(0.0)
                 .child(text("REEL INDEX").color(p.brass)).child(reel_list(s,p,100)))
             .child(player(s,p).grow(1.4))
-            .child(col().w(260.0).grow(0.7).min_h(0.0).fill(p.pane2).border(1.0,p.line).child(reel_evidence(s,p))));
+            .child(col().w(260.0).grow(0.7).min_h(0.0) .fill(Color::TRANSPARENT)
+                .child(canvas(forge_shell(p.pane2,p,false).view_box(1000.,1000.)).w_full().h_full().absolute(0.,0.))
+                .child(reel_evidence(s,p))));
         out=out.child(filmstrip(s,p,false));
         out=out.child(dim(format!("CATEGORY: {}  •  Evidence must be reviewed before approval",REEL_CATEGORIES[s.category]),p));
         if s.confirm==Some("approve_reel"){
@@ -705,7 +816,7 @@ fn music_table(s:&App,p:Paint)->El{
             "title"=>Cell::text(&t.title),"artist"=>Cell::text(&t.artist),"format"=>Cell::text(&t.format).muted(),
             _=>Cell::el(chip(t.action.label(),p,t.action==model::Decision::Review))}})
         .on_select(|s:&mut App,id,_| {if let Ok(id)=id.parse(){s.select_track(id)}})
-        .zebra(true).build(s,k).grow(1.0).min_h(0.0)
+        .style(forge_table_style(p,k)).zebra(true).build(s,k).grow(1.0).min_h(0.0)
 }
 fn waveform(s:&App,p:Paint,compact:bool)->El {
     if s.waveform.is_empty(){return row().center_y().child(dim("Select music to generate waveform",p));}
@@ -719,18 +830,20 @@ fn waveform(s:&App,p:Paint,compact:bool)->El {
     canvas(shape).size(width,height)
 }
 fn music_player(s:&App,p:Paint,small:bool)->El {
-    let title=s.selected_track.and_then(|id|s.lib.tracks.iter().find(|t|t.id==id));
+    let current=s.selected_track.and_then(|id|s.lib.tracks.iter().find(|t|t.id==id));
     let status=if let Some(audio)=s.audio.as_ref(){if audio.is_playing(){"❚❚"}else{"▶"}}else{"▶"};
-    let mut bar=row().h(if small{49.0}else{62.0}).px(7.0).gap(9.0).center_y()
-        .fill(hex("#11080A")).border(1.0,p.line)
+    let plate=forge_shell(hex("#10070A"),p,false).view_box(1000.,1000.);
+    let mut bar=row().h(if small{52.0}else{69.0}).px(13.0).gap(11.0).center_y().fill(Color::TRANSPARENT)
+        .child(canvas(plate).w_full().h_full().absolute(0.,0.))
         .child(action(status,p,true,|s|if let Some(audio)=s.audio.as_ref(){if audio.is_playing(){audio.pause()}else{audio.play()}}));
-    if let Some(t)=title{bar=bar.child(thumb(s,&format!("audio:{}",t.id),p,40.0,40.0));}
-    if !small {bar=bar.child(col().w(140.0).gap(2.0)
-        .child(label(title.map(|t|t.title.clone()).unwrap_or_else(||"No track selected".into()).chars().take(26).collect::<String>(),p))
-        .child(dim(title.map(|t|t.artist.clone()).unwrap_or_default().chars().take(22).collect::<String>(),p)));}
+    if let Some(t)=current{bar=bar.child(thumb(s,&format!("audio:{}",t.id),p,46.0,46.0));}
+    if !small {bar=bar.child(col().w(166.0).gap(3.0)
+        .child(text("NOW PLAYING").font(rune::tok::type_::LABEL).color(p.brass))
+        .child(label(current.map(|t|t.title.clone()).unwrap_or_else(||"No selected track".into()).chars().take(25).collect::<String>(),p))
+        .child(dim(current.map(|t|t.artist.clone()).unwrap_or_default().chars().take(28).collect::<String>(),p)));}
     bar=bar.child(waveform(s,p,small).grow(1.0).min_w(70.0));
     if let Some(audio)=s.audio.as_ref(){bar=bar.child(dim(format!("{:02}:{:02}",(audio.time() as u64)/60,(audio.time() as u64)%60),p));}
-    bar
+    bar.child(el().w(10.0))
 }
 fn music_panel(s:&App,p:Paint,small:bool)->El{
     let cats=s.lib.folders();
@@ -739,10 +852,16 @@ fn music_panel(s:&App,p:Paint,small:bool)->El{
     groups=groups.child(action(format!("ALL MUSIC   {}",s.lib.tracks.len()),p,true,|s|{s.search.text.clear();s.recompute()}));
     for (name,count) in cats.iter().take(if small{7}else{100}){
         let query=name.clone();
-        groups=groups.child(row().h(27.0).px(5.0).gap(4.0).center_y()
-            .hover(p.red_dim).focusable(true).on_press(move|s:&mut App|{s.search.text=query.clone();s.recompute();})
+        let active=s.search.text.trim()==name.as_str();
+        let plate=Shape::new()
+            .fill(vec![[0.,0.],[95.,0.],[100.,50.],[95.,100.],[0.,100.]],if active{p.red_dim}else{p.pane2})
+            .stroke(vec![[0.,0.],[95.,0.],[100.,50.],[95.,100.],[0.,100.]],if active{1.2}else{0.4},if active{p.red}else{p.line})
+            .fill(vec![[0.,0.],[2.,0.],[2.,100.],[0.,100.]],if active{p.red}else{p.pane2});
+        groups=groups.child(row().h(29.0).px(7.0).gap(5.0).center_y().fill(Color::TRANSPARENT)
+            .child(canvas(plate.view_box(100.,100.)).w_full().h_full().absolute(0.,0.))
+            .focusable(true).on_press(move|s:&mut App|{s.search.text=query.clone();s.recompute();})
             .child(text("♫").color(p.brass))
-            .child(text(name.chars().take(19).collect::<String>()).color(p.muted).grow(1.0))
+            .child(text(name.chars().take(19).collect::<String>()).color(if active{p.ink}else{p.muted}).grow(1.0))
             .child(chip(count.to_string(),p,false)));
     }
     let mut body=col().padding(if small{6.0}else{10.0}).gap(6.0).grow(1.0).min_h(0.0)
@@ -777,19 +896,20 @@ fn music_panel(s:&App,p:Paint,small:bool)->El{
 fn job_row(s:&App,p:Paint,index:usize)->El{
     let j=&s.queue.jobs()[index];let id=j.id;
     let progress=j.progress.unwrap_or(0.0).clamp(0.0,1.0);
-    col().key(format!("job-{id}")).w_full().gap(4.0).padding(5.0).fill(hex("#160B0D")).border(1.0,p.line)
-        .child(row().gap(7.0).center_y()
+    col().key(format!("job-{id}")).w_full().gap(5.0).padding(9.0).fill(Color::TRANSPARENT)
+        .child(canvas(forge_shell(p.pane2,p,false).view_box(1000.,1000.)).w_full().h_full().absolute(0.,0.))
+        .child(row().gap(8.0).center_y()
             .child(chip(j.kind.label(),p,false))
-            .child(text(j.current_item.clone().chars().take(42).collect::<String>()).color(p.ink).grow(1.0))
+            .child(text(j.current_item.clone().chars().take(44).collect::<String>()).color(p.ink).grow(1.0))
             .child(chip(j.state.label(),p,j.state.is_pending()))
             .child(action(if j.state.can_retry(){"RETRY"}else{"STOP"},p,false,move|s|{
                 if s.queue.jobs().iter().any(|j|j.id==id&&j.state.can_retry()){s.queue.retry(id)}else{s.queue.cancel(id)}s.recompute();})))
-        .child(row().h(10.0).gap(6.0).center_y()
+        .child(row().h(12.0).gap(8.0).center_y()
             .child(el().h(6.0).grow(1.0).fill(p.bg).border(1.0,p.line)
                 .child(el().h(4.0).w(progress*230.0).fill(p.red)))
             .child(dim(format!("{:.0}%",progress*100.0),p))
             .child(dim(j.speed.clone(),p)))
-        .child(dim(j.source.chars().take(88).collect::<String>(),p))
+        .child(dim(j.source.chars().take(90).collect::<String>(),p))
 }
 fn progress_ring(percent:f32,p:Paint)->El {
     let mut background=Shape::new();let mut foreground=Shape::new();
