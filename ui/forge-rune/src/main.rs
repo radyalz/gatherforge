@@ -1,8 +1,11 @@
 //! GatherForge Forge Edition — native Rune desktop.
 //! Shares the real music, Instagram and persistent download engines with GatherForge.
 //! No mock rows, no fake download progress, no invented transcripts.
+mod embedded_egui;
+#[path = "../../shared/forge_components.rs"] mod forge_components;
+use forge_components::ButtonKind;
 use std::{borrow::Cow, collections::{BTreeMap,HashMap}, fs, path::{Path, PathBuf}, sync::{mpsc::{self, Receiver}, OnceLock}, process::Command, thread, time::{Duration,Instant}};
-use rune::{AppSpec, Color, Cx, El, Image, ImageCache, Player, PlayerState, ScrollSpec, Shape, TextEdit, Tx, Waker, canvas, col, el, row, text};
+use rune::{AppSpec, SurfaceFit, Color, Cx, El, Image, ImageCache, Player, PlayerState, ScrollSpec, Shape, TextEdit, Tx, Waker, canvas, col, el, row, text};
 use rune_kit::{Cell, Kit, PaletteSeed, Table, TableColumn, TableState, TableStyle, TextInput};
 use serde_json::Value;
 
@@ -41,6 +44,173 @@ fn kit(dark: bool) -> &'static Kit {
 
 #[derive(Clone)]
 struct ModelRow { id:String, name:String, role:String, status:String, size:String }
+// Native Rune implementation of the shadcn/MUI-inspired Forge interaction contract.
+// The React/CSS version is supplied separately; Rune itself does not execute Tailwind CSS.
+#[derive(Clone, Copy)]
+struct ForgeRipple { origin: [f32; 2], since: Instant }
+struct ForgeControl {
+    size: [f32; 2], cursor: [f32; 2], saw_cursor: bool,
+    hovered: bool, entered: Instant, ripple: Option<ForgeRipple>,
+}
+impl ForgeControl {
+    fn new() -> Self {
+        Self { size: [110.0, 34.0], cursor: [55.0, 17.0], saw_cursor: false,
+            hovered: false, entered: Instant::now(), ripple: None }
+    }
+}
+#[derive(Default)]
+struct ForgeInteraction { controls: HashMap<String, ForgeControl> }
+impl ForgeInteraction {
+    fn get(&self, id: &str) -> Option<&ForgeControl> { self.controls.get(id) }
+    fn ensure(&mut self, id: &str) -> &mut ForgeControl {
+        self.controls.entry(id.to_owned()).or_insert_with(ForgeControl::new)
+    }
+    fn hover(&mut self, id: &str, inside: bool) {
+        let state=self.ensure(id);
+        if state.hovered != inside {
+            state.hovered=inside;
+            if inside { state.entered=Instant::now(); }
+        }
+    }
+    fn layout(&mut self, id: &str, width: f32, height: f32) {
+        let state=self.ensure(id);
+        if width.is_finite() && height.is_finite() && width>=20.0 && height>=20.0 {
+            state.size=[width,height];
+            if !state.saw_cursor { state.cursor=[width/2.0,height/2.0]; }
+        }
+    }
+    fn pointer(&mut self, id: &str, x: f32, y: f32) {
+        let state=self.ensure(id);
+        if x.is_finite() && y.is_finite() {
+            state.cursor=[x.clamp(0.0,state.size[0]),y.clamp(0.0,state.size[1])];
+            state.saw_cursor=true;
+        }
+    }
+    fn click(&mut self, id: &str) {
+        let state=self.ensure(id);
+        let origin=if state.saw_cursor {state.cursor}
+                   else {[state.size[0]*0.5,state.size[1]*0.5]};
+        state.ripple=Some(ForgeRipple {origin,since:Instant::now()});
+    }
+    fn animate(&mut self) -> bool {
+        let now=Instant::now();
+        let mut active=false;
+        for state in self.controls.values_mut() {
+            if state.ripple.is_some_and(|r| now.duration_since(r.since)>=Duration::from_millis(620)) {
+                state.ripple=None;
+            }
+            active |= state.hovered || state.ripple.is_some();
+        }
+        active
+    }
+}
+
+// Forge border trace based on a repeating SVG stroke-dashoffset / CSS conic-ring
+// design, rendered natively in Rune.  This is a perimeter-bound luminous DASH,
+// not a travelling dot.  The leading end stays bright; the rest fades smoothly.
+// Both the button and border path have 4px outer corners.
+fn forge_edge_path_inset(w: f32, h: f32, inset: f32) -> Vec<[f32; 2]> {
+    let outer_radius = 4.0_f32.min(w.min(h)*0.5);
+    let radius = (outer_radius-inset).max(0.0);
+    let x1 = w-inset;
+    let y1 = h-inset;
+    let cx = [inset+radius, x1-radius, x1-radius, inset+radius];
+    let cy = [inset+radius, inset+radius, y1-radius, y1-radius];
+    let corners = [(180.0_f32,270.0_f32),(270.0,360.0),(0.0,90.0),(90.0,180.0)];
+    let mut out=Vec::with_capacity(38);
+    for corner in 0..4 {
+        let (from,to)=corners[corner];
+        for n in 0..=8 {
+            let angle=(from+(to-from)*(n as f32/8.0)).to_radians();
+            out.push([cx[corner]+radius*angle.cos(),cy[corner]+radius*angle.sin()]);
+        }
+    }
+    out.push(out[0]);
+    out
+}
+fn forge_edge_path(w: f32, h: f32) -> Vec<[f32; 2]> {
+    forge_edge_path_inset(w,h,2.0)
+}
+fn forge_perimeter_point(path: &[[f32;2]], fraction: f32) -> [f32;2] {
+    let perimeter: f32=path.windows(2).map(|p|
+        ((p[1][0]-p[0][0]).powi(2)+(p[1][1]-p[0][1]).powi(2)).sqrt()).sum();
+    if perimeter<=f32::EPSILON {return path.first().copied().unwrap_or([0.0,0.0]);}
+    let mut remaining=fraction.rem_euclid(1.0)*perimeter;
+    for edge in path.windows(2) {
+        let length=((edge[1][0]-edge[0][0]).powi(2)+(edge[1][1]-edge[0][1]).powi(2)).sqrt();
+        if remaining<=length && length>0.0 {
+            let t=remaining/length;
+            return [edge[0][0]+(edge[1][0]-edge[0][0])*t,
+                    edge[0][1]+(edge[1][1]-edge[0][1])*t];
+        }
+        remaining-=length;
+    }
+    path.first().copied().unwrap_or([0.0,0.0])
+}
+
+// Stable 20%-perimeter dash (matching an SVG pathLength=100 dash 20/80).
+// Clockwise sweep, easing-free, one revolution per 2.1s; wraps seamlessly.
+// Multiple stroke layers approximate the clipped conic-gradient plus its glow.
+fn forge_trace(shape: Shape, path:&[[f32;2]], phase:f32, color:Color, tip:Color) -> Shape {
+    let segments=24;
+    let dash=0.20_f32;
+    let mut shape=shape;
+    // Subdued bloom beneath the crisp 1.8px border trace.
+    for layer in 0..3 {
+        for i in 0..segments {
+            let u0=i as f32/segments as f32;
+            let u1=(i+1) as f32/segments as f32;
+            let mid=(u0+u1)*0.5;
+            // Conic-gradient-style fading tail; high-energy leading 20%.
+            let energy=mid*mid*(3.0-2.0*mid);
+            let a=forge_perimeter_point(path,phase-dash*(1.0-u0));
+            let b=forge_perimeter_point(path,phase-dash*(1.0-u1));
+            let (thickness,opacity) = match layer {
+                0 => (7.0,0.022+0.085*energy),
+                1 => (3.7,0.035+0.16*energy),
+                _ => (1.8,0.04+0.89*energy),
+            };
+            let ink=if mid>0.89 {tip} else {color};
+            shape=shape.stroke_with(vec![a,b],false,thickness,rune::LineCap::Butt,ink.alpha(opacity));
+        }
+    }
+    shape
+}
+
+// Native Rune visual contract: cyclic traced rim, optional persistent inset
+// active glow, and pointer-centred MUI-like click ripple. No prefix decoration.
+fn forge_fx_overlay(fx:Option<&ForgeControl>,p:Paint,active:bool,accent:Color) -> El {
+    let [w,h]=fx.map(|f|f.size).unwrap_or([110.0,34.0]);
+    let mut shape=Shape::new();
+    let now=Instant::now();
+    if active {
+        // The selected control glows INWARD, as in the pressed-state example.
+        let inner=forge_edge_path_inset(w,h,5.5);
+        shape=shape.stroke(inner.clone(),8.5,accent.alpha(0.10));
+        shape=shape.stroke(inner.clone(),4.5,accent.alpha(0.21));
+        shape=shape.stroke(inner,1.1,p.brass.alpha(0.44));
+    }
+    if let Some(fx)=fx {
+        if fx.hovered {
+            let path=forge_edge_path(w,h);
+            let phase=(now.duration_since(fx.entered).as_secs_f32()/2.1).fract();
+            shape=forge_trace(shape,&path,phase,accent,p.ink);
+        }
+        // Ripple is separate from the border trace and follows the click position.
+        if let Some(ripple)=fx.ripple {
+            let t=(now.duration_since(ripple.since).as_secs_f32()/0.62).clamp(0.0,1.0);
+            let eased=1.0-(1.0-t).powi(3);
+            let radius=(w.max(h)*1.30)*(0.015+0.985*eased);
+            let circle=(0..=48).map(|n| {
+                let angle=std::f32::consts::TAU*(n as f32/48.0);
+                [ripple.origin[0]+angle.cos()*radius,ripple.origin[1]+angle.sin()*radius]
+            }).collect::<Vec<_>>();
+            shape=shape.fill(circle.clone(),p.ink.alpha(0.22*(1.0-t).powi(2)));
+            shape=shape.stroke(circle,1.2,p.ink.alpha(0.35*(1.0-t)));
+        }
+    }
+    canvas(shape.view_box(w,h)).w_full().h_full().absolute(0.0,0.0)
+}
 #[derive(Clone, Copy)]
 enum MediaRef { Audio(usize), Reel(usize) }
 const REEL_CATEGORIES: &[&str] = &["Food and recipes","Fitness and health","Travel and places","Technology and gadgets","Home and DIY","Education and tutorials","Entertainment and humor","Shopping and products","Other"];
@@ -56,7 +226,7 @@ struct App {
     confirm: Option<&'static str>, notice: String, busy: bool, rx: Receiver<WorkerMsg>, tx: mpsc::Sender<WorkerMsg>,
     video_error: Option<String>, model_busy:bool, analysis_busy:bool,
     images: Option<ImageCache>, emblem: Option<Image>, anvil: Option<Image>, metal: Option<Image>, thumbs: HashMap<String,Image>,
-    waveform: Vec<f32>, cpu:f32, cpu_prev:Option<(u64,u64)>, ram_used:u64, ram_total:u64, last_stats:Instant,
+    waveform: Vec<f32>, forge_fx: ForgeInteraction, embedded_buttons:embedded_egui::EmbeddedButtons, cpu:f32, cpu_prev:Option<(u64,u64)>, ram_used:u64, ram_total:u64, last_stats:Instant,
 }
 fn prefs() -> (PathBuf,PathBuf,bool) {
     let settings=dirs::config_dir().unwrap_or_else(std::env::temp_dir).join("gatherforge/settings.json");
@@ -92,7 +262,7 @@ fn init() -> App {
         clip:None,audio:None,table_media:TableState::new(),table_music:TableState::new(),table_jobs:TableState::new(),
         media_rows:vec![],music_rows:vec![],queue_rows:vec![],filter:0,source:0,queue_filter:0,category:0,
         models:model_rows(),confirm:None,notice:"LOCAL FORGE ENGINE  /  READY".into(),busy:false,rx,tx,video_error:None,model_busy:false,analysis_busy:false,
-        images:None,emblem:None,anvil:None,metal:None,thumbs:HashMap::new(),waveform:vec![],cpu:0.0,cpu_prev:None,ram_used:0,ram_total:0,last_stats:Instant::now() };
+        images:None,emblem:None,anvil:None,metal:None,thumbs:HashMap::new(),waveform:vec![],forge_fx:ForgeInteraction::default(),embedded_buttons:embedded_egui::EmbeddedButtons::default(),cpu:0.0,cpu_prev:None,ram_used:0,ram_total:0,last_stats:Instant::now() };
     s.recompute(); if !s.reels.is_empty(){s.choose_reel(0);} if let Some(t)=s.lib.tracks.first(){let id=t.id;s.select_track(id);} s
 }
 impl App {
@@ -111,7 +281,17 @@ impl App {
             valid && (needle.is_empty() || format!("{} {}",j.source,j.current_item).to_lowercase().contains(&needle))
         }).map(|(i,_)|i).collect();
     }
-    fn switch(&mut self,page:Page){self.page=page;self.search.text.clear();self.recompute();self.confirm=None;}
+    // Rune is only shell/navigation/config: real media workspaces are egui native windows.
+        // Rune owns navigation and the persistent Rust media state. No secondary windows.
+    fn switch(&mut self,page:Page){
+        self.embedded_buttons.cancel_all_hovers();
+        for control in self.forge_fx.controls.values_mut(){control.hovered=false;control.ripple=None;}
+        self.page=page;
+        self.search.text.clear();
+        self.recompute();
+        self.confirm=None;
+    }
+
     fn choose_reel(&mut self,index:usize) {
         if let Some(reel)=self.reels.get(index) {
             let path=self.reel_root.join(&reel.video);
@@ -317,6 +497,7 @@ impl App {
     }
 }
 fn setup(s:&mut App,waker:Waker){
+    s.embedded_buttons.setup(waker.clone());
     if let Some(clip)=s.clip.as_ref(){clip.set_waker(waker.clone())} if let Some(audio)=s.audio.as_ref(){audio.set_waker(waker.clone())}
     let cache=ImageCache::new(waker);
     s.emblem=Some(cache.load(&include_bytes!("../assets/forge_emblem.png")[..]));
@@ -341,7 +522,14 @@ fn poll(s:&mut App,_elapsed:f64,tx:&mut Tx)->bool {
     }
     if update {s.recompute();}
     if s.last_stats.elapsed()>=Duration::from_secs(2){s.refresh_stats();s.last_stats=Instant::now();}
-    tx.wake_after(Duration::from_millis(if s.clip.as_ref().is_some_and(|c|c.is_playing()) || s.audio.as_ref().is_some_and(|c|c.is_playing()){33}else if s.queue.has_active(){100}else{750}));
+    // Real egui tessellation -> BGRA NativeSurface -> Rune GPU composition.
+    // This runs inside the Rune event loop; there is no second app/process.
+    if let Err(error)=s.embedded_buttons.render(){
+        let message=format!("Embedded egui paint error: {error}");
+        if s.notice != message{s.notice=message;}
+    }
+    let forge_animating=s.forge_fx.animate() || s.embedded_buttons.is_animating();
+    tx.wake_after(Duration::from_millis(if forge_animating{16}else if s.clip.as_ref().is_some_and(|c|c.is_playing()) || s.audio.as_ref().is_some_and(|c|c.is_playing()){33}else if s.queue.has_active(){100}else{750}));
     true
 }
 fn label(t:impl Into<String>,p:Paint)->El{text(t).color(p.ink)}
@@ -389,21 +577,74 @@ fn chip(t:impl Into<String>,p:Paint,active:bool)->El{
         .child(text(t).font(rune::tok::type_::LABEL).color(if active{p.ink}else{p.brass}))
         .child(el().w(10.0))
 }
-fn action(t:impl Into<String>,p:Paint,primary:bool,press:impl Fn(&mut App)+'static)->El {
-    let base=if primary{hex("#AD101E")}else{hex("#190D10")};
-    let rim=if primary{p.red}else{p.brass};
-    let plate=Shape::new()
-        .fill(vec![[0.,7.],[7.,0.],[91.,0.],[100.,9.],[100.,32.],[0.,32.]],rim)
-        .fill(vec![[2.,8.],[8.,2.],[90.,2.],[98.,10.],[98.,30.],[2.,30.]],base)
-        .fill(vec![[3.,4.],[8.,2.],[37.,2.],[32.,4.]],if primary{p.brass}else{p.red})
-        .stroke(vec![[4.,29.],[87.,29.]],0.9,p.red_dim);
-    row().h(33.0).min_w(50.0).gap(6.0).center_y().fill(Color::TRANSPARENT)
-        .child(canvas(plate.view_box(100.,32.)).w_full().h_full().absolute(0.,0.))
-        .press_scale(0.98).focusable(true).on_press(press)
-        .child(el().w(10.0).h(14.0).child(el().w(2.0).h(12.0).fill(if primary{p.brass}else{p.red})))
-        .child(text(t).font(rune::tok::type_::LABEL).color(p.ink))
-        .child(el().w(12.0))
+// All actions share a 4px corner, colored rim and infinite border trace.
+// The optional selected state is independent of the primary color variant.
+#[track_caller]
+fn action(t:impl Into<String>,s:&App,p:Paint,primary:bool,press:impl Fn(&mut App)+'static)->El {
+    forge_button(t,s,p,primary,false,ButtonKind::Regular,None,press)
 }
+#[track_caller]
+fn action_state(t:impl Into<String>,s:&App,p:Paint,primary:bool,selected:bool,press:impl Fn(&mut App)+'static)->El {
+    forge_button(t,s,p,primary,selected,ButtonKind::Pill,None,press)
+}
+#[track_caller]
+fn action_pill(t:impl Into<String>,s:&App,p:Paint,primary:bool,press:impl Fn(&mut App)+'static)->El {
+    forge_button(t,s,p,primary,false,ButtonKind::Pill,None,press)
+}
+#[track_caller]
+fn action_icon(icon:&str,s:&App,p:Paint,primary:bool,press:impl Fn(&mut App)+'static)->El {
+    forge_button("",s,p,primary,false,ButtonKind::Icon,Some(icon.to_owned()),press)
+}
+#[track_caller]
+fn action_icon_label(icon:&str,t:impl Into<String>,s:&App,p:Paint,primary:bool,press:impl Fn(&mut App)+'static)->El {
+    forge_button(t,s,p,primary,false,ButtonKind::IconLabel,Some(icon.to_owned()),press)
+}
+#[track_caller]
+fn action_pill_icon_label(icon:&str,t:impl Into<String>,s:&App,p:Paint,primary:bool,press:impl Fn(&mut App)+'static)->El {
+    forge_button(t,s,p,primary,false,ButtonKind::Pill,Some(icon.to_owned()),press)
+}
+#[track_caller]
+fn forge_button(t:impl Into<String>,s:&App,p:Paint,primary:bool,selected:bool,kind:ButtonKind,icon:Option<String>,press:impl Fn(&mut App)+'static)->El {
+    let caption=t.into();
+    let preset=forge_components::button(kind);
+    let caller=std::panic::Location::caller();
+    let id=format!("forge-button:{}:{}:{}:{}",caller.line(),caller.column(),caption,icon.as_deref().unwrap_or(""));
+    let hover_id=id.clone();let pointer_id=id.clone();let layout_id=id.clone();let click_id=id.clone();
+    let layout_caption=caption.clone();let layout_icon=icon.clone();
+    let panel=if let Some(surface)=s.embedded_buttons.surface(&id) {
+        el().w_full().h_full().native_surface(surface,SurfaceFit::Fill).absolute(0.0,0.0)
+    } else {
+        el().w_full().h_full().fill(if primary{p.red_dim}else{p.pane2})
+            .radius(preset.radius).border(1.0,if primary{p.red}else{p.brass}).absolute(0.0,0.0)
+    };
+    let intrinsic=match (kind,icon.as_deref()) {
+        (ButtonKind::Icon,Some(glyph))=>glyph.to_owned(),
+        (_,Some(glyph))=>format!("{glyph}  {caption}"),
+        _=>caption.clone()
+    };
+    row().key(id).h(preset.height).min_w(preset.minimum_width).px(preset.padding_x).center_y()
+        .fill(Color::TRANSPARENT).radius(preset.radius).focusable(true)
+        .on_hover_change(move|state:&mut App,inside,tx|{
+            state.embedded_buttons.hover(&hover_id,inside);
+            if inside{tx.wake_after(Duration::from_millis(16));}
+        })
+        .on_pointer_move_local(move|state:&mut App,pointer,tx|{
+            state.embedded_buttons.move_pointer(&pointer_id,pointer.x,pointer.y);
+            tx.wake_after(Duration::from_millis(16));
+        })
+        .on_layout_tx(move|state:&mut App,rect,tx|{
+            state.embedded_buttons.configure(&layout_id,&layout_caption,layout_icon.as_deref(),kind,primary,selected,state.dark,rect[2],rect[3]);
+            tx.wake_after(Duration::ZERO);
+        })
+        .on_press_tx(move|state:&mut App,tx|{
+            state.embedded_buttons.click(&click_id);
+            press(state);
+            tx.wake_after(Duration::from_millis(16));
+        })
+        .child(panel)
+        .child(text(intrinsic).font(rune::tok::type_::LABEL).color(Color::TRANSPARENT))
+}
+
 fn panel(title:&str, subtitle:&str,p:Paint,child:El)->El{
     let icon=match title{
         "MEDIA LIBRARY"=>"◇", "REEL STUDIO"=>"⬡", "MUSIC CATEGORIZER"=>"♫",
@@ -459,6 +700,9 @@ fn nav_glyph(page:Page,p:Paint)->El {
 }
 fn tab(t:&str,page:Page,s:&App,p:Paint)->El{
     let active=s.page==page;
+    let id=format!("forge-nav-{}",page.name());
+    let fx=s.forge_fx.get(&id);
+    let hover_id=id.clone();let pointer_id=id.clone();let layout_id=id.clone();let click_id=id.clone();
     let surface=if active{hex("#8C0D1B")}else{p.side};
     let tab_shape=Shape::new()
         .fill(vec![[0.,0.],[176.,0.],[194.,21.],[176.,42.],[0.,42.]],surface)
@@ -466,9 +710,17 @@ fn tab(t:&str,page:Page,s:&App,p:Paint)->El{
             if active{1.7}else{0.7},if active{p.red}else{p.line})
         .fill(vec![[0.,0.],[4.,0.],[4.,42.],[0.,42.]],if active{p.red}else{p.side})
         .stroke(vec![[7.,4.],[40.,4.]],if active{1.4}else{0.5},if active{p.brass}else{p.line});
-    row().key(format!("nav-{}",page.name())).h(43.0).w_full().gap(10.0).center_y().fill(Color::TRANSPARENT)
+    row().key(id).h(43.0).w_full().gap(10.0).center_y().fill(Color::TRANSPARENT)
+        .radius(4.0).clip_rounded(4.0)
+        .border(if active{1.0}else{0.0},if active{p.red}else{p.brass})
+        .hover(p.red.alpha(0.08))
         .child(canvas(tab_shape.view_box(194.,42.)).w_full().h_full().absolute(0.,0.))
-        .focusable(true).on_press(move|state:&mut App|state.switch(page))
+        .focusable(true)
+        .on_hover_change(move|state:&mut App,inside,tx|{state.forge_fx.hover(&hover_id,inside);if inside{tx.wake_after(Duration::from_millis(16));}})
+        .on_pointer_move_local(move|state:&mut App,pointer,_|state.forge_fx.pointer(&pointer_id,pointer.x,pointer.y))
+        .on_layout(move|state:&mut App,rect|state.forge_fx.layout(&layout_id,rect[2],rect[3]))
+        .on_press_tx(move|state:&mut App,tx|{state.forge_fx.click(&click_id);state.switch(page);tx.wake_after(Duration::from_millis(16));})
+        .child(forge_fx_overlay(fx,p,active,p.red))
         .child(el().w(10.0))
         .child(nav_glyph(page,p))
         .child(text(t).color(if active{p.ink}else{p.muted}).grow(1.0))
@@ -547,8 +799,8 @@ fn header(s:&App,p:Paint)->El{
     r=r.child(meter("RAM",if s.ram_total>0{format!("{:.1}G",s.ram_used as f32/1024.0)}else{"N/A".into()},
         if s.ram_total>0{s.ram_used as f32/s.ram_total as f32}else{0.0},p));
     r=r.child(chip(format!("{} ACTIVE",s.queue.active_count()),p,s.queue.has_active()));
-    r=r.child(action("SETTINGS",p,false,|s|s.switch(Page::Settings)));
-    r.child(action(if s.dark{"LIGHT"}else{"DARK"},p,false,|s|s.dark=!s.dark))
+    r=r.child(action_pill_icon_label("⚙","SETTINGS",s,p,false,|s|s.switch(Page::Settings)));
+    r.child(action_icon(if s.dark{"☼"}else{"☾"},s,p,false,|s|s.dark=!s.dark))
         .child(el().w(12.0))
 }
 fn status(s:&App,p:Paint)->El{
@@ -580,11 +832,12 @@ fn thumb(s:&App,key:&str,p:Paint,w:f32,h:f32)->El {
             .view_box(100.,100.)).w_full().h_full().absolute(0.,0.))
         .center().child(text(icon).font(rune::tok::type_::TITLE).color(p.brass))
 }
-fn forge_table_style(p:Paint,k:&Kit)->TableStyle {
+fn forge_table_style(p:Paint,k:&Kit,preset:&str)->TableStyle {
+    let settings=forge_components::table(preset);
     let mut style=TableStyle::from_kit(k);
-    style.row_height=34.0;
-    style.header_height=33.0;
-    style.cell_pad=9.0;
+    style.row_height=settings.row_height;
+    style.header_height=settings.header_height;
+    style.cell_pad=settings.cell_padding;
     style.rule=p.line;
     style.text=p.ink;
     style.muted=p.muted;
@@ -592,6 +845,14 @@ fn forge_table_style(p:Paint,k:&Kit)->TableStyle {
     style.selected=p.red_dim;
     style.stripe=hex("#180C10");
     style
+}
+fn forge_table_column(table:&str,id:&'static str,title:&'static str)->TableColumn {
+    let t=forge_components::column(table,id);
+    let mut column=TableColumn::new(id,title);
+    column=if let Some(w)=t.width{column.width(w)}else{column.flex(t.flex).min(t.minimum)};
+    if !t.resizable{column=column.resizable(false);}
+    if t.sortable{column=column.sortable();}
+    column
 }
 fn media_table(s:&App,p:Paint,small:bool)->El{
     let k=kit(s.dark);
@@ -601,11 +862,11 @@ fn media_table(s:&App,p:Paint,small:bool)->El{
             MediaRef::Reel(r)=>Cow::Owned(format!("reel:{}",s.reels[r].id)),
         })
         .name("Forge Combined Media Library")
-        .column(TableColumn::new("art","Art").width(55.0).resizable(false))
-        .column(TableColumn::new("title","Title").flex(3.0).min(130.0).sortable())
-        .column(TableColumn::new("artist","Artist / Creator").flex(2.0).min(100.0).sortable())
-        .column(TableColumn::new("format","Type").width(77.0).sortable())
-        .column(TableColumn::new("review","Status").width(85.0).sortable())
+        .column(forge_table_column("media","art","Art"))
+        .column(forge_table_column("media","title","Title"))
+        .column(forge_table_column("media","artist","Artist / Creator"))
+        .column(forge_table_column("media","format","Type"))
+        .column(forge_table_column("media","review","Status"))
         .cell(move|s:&App,i,col|match s.media_rows[i] {
             MediaRef::Audio(t)=>{let t=&s.lib.tracks[t];match col {
                 "art"=>Cell::el(thumb(s,&format!("audio:{}",t.id),p,41.0,26.0)),
@@ -634,20 +895,20 @@ fn media_table(s:&App,p:Paint,small:bool)->El{
                 dir.apply(key(a).to_lowercase().cmp(&key(b).to_lowercase()))
             });
         })
-        .style(forge_table_style(p,k)).zebra(true).build(s,k).grow(1.0).min_h(0.0);
+        .style(forge_table_style(p,k,"media")).zebra(forge_components::table("media").zebra).build(s,k).grow(1.0).min_h(0.0);
     col().gap(8.0).padding(if small{7.0}else{12.0}).min_h(0.0).grow(1.0)
         .child(row().gap(6.0).center_y()
             .child(chip(format!("{} FILES",s.media_rows.len()),p,false))
-            .child(action("ALL",p,s.filter==0,|s|{s.filter=0;s.recompute()}))
-            .child(action("AUDIO",p,s.filter==1,|s|{s.filter=1;s.recompute()}))
-            .child(action("VIDEO",p,s.filter==2,|s|{s.filter=2;s.recompute()}))
+            .child(action_state("ALL",s,p,s.filter==0,s.filter==0,|s|{s.filter=0;s.recompute()}))
+            .child(action_state("AUDIO",s,p,s.filter==1,s.filter==1,|s|{s.filter=1;s.recompute()}))
+            .child(action_state("VIDEO",s,p,s.filter==2,s.filter==2,|s|{s.filter=2;s.recompute()}))
             .child(el().grow(1.0))
-            .child(action("+ SCAN",p,true,|s|s.scan())))
+            .child(action_icon_label("+","SCAN",s,p,true,|s|s.scan())))
         .child(table)
 }
 fn reel_row(reel:&instagram::Reel,index:usize,p:Paint,active:bool)->El{
     let title=if reel.creator.is_empty(){&reel.id}else{&reel.creator};
-    row().key(format!("reel-{index}")).h(43.0).w_full().px(7.0).gap(7.0).center_y()
+    row().key(format!("reel-{index}")).h(forge_components::table("reels").row_height).w_full().px(7.0).gap(7.0).center_y()
         .fill(if active{p.red_dim}else{p.pane2}).border(1.0,if active{p.red}else{p.line})
         .hover(p.red_dim).focusable(true).on_press(move|s:&mut App|s.choose_reel(index))
         .child(text("▣").color(p.brass)).child(col().gap(2.0).grow(1.0)
@@ -722,11 +983,11 @@ fn player(s:&App,p:Paint)->El{
         let duration=clip.duration().unwrap_or(0.0);
         let progress=if duration>0.0{(clip.time()/duration).clamp(0.0,1.0) as f32}else{0.0};
         player_col=player_col.child(row().h(31.0).gap(6.0).center_y()
-            .child(action(status,p,true,move|s|{
+            .child(action(status,s,p,true,move|s|{
                 if failed {s.open_video_external();}else if let Some(c)=s.clip.as_ref(){if c.is_playing(){c.pause()}else{c.play()}}
             }))
-            .child(action("«",p,false,|s|if let Some(c)=s.clip.as_ref(){c.seek((c.time()-10.0).max(0.0))}))
-            .child(action("»",p,false,|s|if let Some(c)=s.clip.as_ref(){c.seek(c.time()+10.0)}))
+            .child(action_icon("«",s,p,false,|s|if let Some(c)=s.clip.as_ref(){c.seek((c.time()-10.0).max(0.0))}))
+            .child(action_icon("»",s,p,false,|s|if let Some(c)=s.clip.as_ref(){c.seek(c.time()+10.0)}))
             .child(dim(format!("{:02}:{:02} / {:02}:{:02}",(clip.time() as u64)/60,(clip.time() as u64)%60,
                 (duration as u64)/60,(duration as u64)%60),p))
             .child(el().grow(1.0).h(5.0).fill(p.pane2).border(1.0,p.line)
@@ -734,7 +995,7 @@ fn player(s:&App,p:Paint)->El{
         if let Some(reason)=failure {player_col=player_col.child(text(format!("Decoder: {}",reason.chars().take(95).collect::<String>())).color(p.muted));}
     }else if let Some(img)=poster{
         player_col=player_col.child(el().key("preview-still").w_full().grow(1.0).min_h(100.0).pixels(img.pixels()))
-            .child(action("OPEN VIDEO",p,true,|s|s.open_video_external()));
+            .child(action("OPEN VIDEO",s,p,true,|s|s.open_video_external()));
     }else {player_col=player_col.child(col().w_full().grow(1.0).min_h(100.0).fill(p.bg).border(1.0,p.line).center()
         .child(text("NO VIDEO PREVIEW").color(p.brass))
         .child(dim(s.video_error.clone().unwrap_or_else(||"Select a local Reel".into()),p)));}
@@ -765,8 +1026,8 @@ fn reels_panel(s:&App,p:Paint,small:bool)->El{
     if small{
         out=out.child(row().h(31.0).gap(6.0)
             .child(chip(format!("{} LOCAL REELS",s.reels.len()),p,true))
-            .child(action("OPEN STUDIO",p,true,|s|s.switch(Page::Reels)))
-            .child(action("NEXT",p,false,|s|{
+            .child(action("OPEN STUDIO",s,p,true,|s|s.switch(Page::Reels)))
+            .child(action_icon_label("›","NEXT",s,p,false,|s|{
                 if !s.reels.is_empty(){let i=s.selected_reel.as_ref().and_then(|id|s.reels.iter().position(|r|&r.id==id)).unwrap_or(0);s.choose_reel((i+1)%s.reels.len());}
             })));
         out=out.child(row().gap(8.0).grow(1.0).min_h(0.0)
@@ -778,11 +1039,11 @@ fn reels_panel(s:&App,p:Paint,small:bool)->El{
     }else{
         out=out.child(row().gap(6.0).h(32.0)
             .child(chip(format!("{} LOCAL REELS",s.reels.len()),p,true))
-            .child(action("REFRESH",p,false,|s|s.refresh_reels()))
-            .child(action("ANALYZE",p,true,|s|s.analyze_selected()))
-            .child(action("CATEGORY",p,false,|s|s.category=(s.category+1)%REEL_CATEGORIES.len()))
-            .child(action("RECORD",p,false,|s|s.reel_operation("record-category")))
-            .child(action("APPROVE",p,true,|s|s.confirm=Some("approve_reel"))));
+            .child(action_icon_label("↻","REFRESH",s,p,false,|s|s.refresh_reels()))
+            .child(action("ANALYZE",s,p,true,|s|s.analyze_selected()))
+            .child(action("CATEGORY",s,p,false,|s|s.category=(s.category+1)%REEL_CATEGORIES.len()))
+            .child(action("RECORD",s,p,false,|s|s.reel_operation("record-category")))
+            .child(action("APPROVE",s,p,true,|s|s.confirm=Some("approve_reel"))));
         out=out.child(row().gap(10.0).grow(1.0).min_h(0.0)
             .child(col().w(182.0).gap(5.0).min_h(0.0)
                 .child(text("REEL INDEX").color(p.brass)).child(reel_list(s,p,100)))
@@ -795,8 +1056,8 @@ fn reels_panel(s:&App,p:Paint,small:bool)->El{
         if s.confirm==Some("approve_reel"){
             out=out.child(row().h(37.0).gap(8.0).fill(p.red_dim).center_y()
                 .child(label("Approve this Reel and organize its copy?",p))
-                .child(action("CONFIRM",p,true,|s|s.commit_operation()))
-                .child(action("CANCEL",p,false,|s|s.confirm=None)));
+                .child(action("CONFIRM",s,p,true,|s|s.commit_operation()))
+                .child(action("CANCEL",s,p,false,|s|s.confirm=None)));
         }
         out
     }
@@ -806,17 +1067,17 @@ fn music_table(s:&App,p:Paint)->El{
     Table::new(|s:&App|&s.table_music,|s:&mut App|&mut s.table_music,
         |s:&App|s.music_rows.len(),|s:&App,i|Cow::Owned(s.lib.tracks[s.music_rows[i]].id.to_string()))
         .name("Music Categorizer")
-        .column(TableColumn::new("art","Cover").width(53.0).resizable(false))
-        .column(TableColumn::new("title","Title").flex(3.0).min(105.0).sortable())
-        .column(TableColumn::new("artist","Artist").flex(2.0).min(75.0).sortable())
-        .column(TableColumn::new("format","Type").width(65.0).sortable())
-        .column(TableColumn::new("review","Decision").width(90.0).sortable())
+        .column(forge_table_column("music","art","Cover"))
+        .column(forge_table_column("music","title","Title"))
+        .column(forge_table_column("music","artist","Artist"))
+        .column(forge_table_column("music","format","Type"))
+        .column(forge_table_column("music","review","Decision"))
         .cell(move|s:&App,i,col|{let t=&s.lib.tracks[s.music_rows[i]];match col {
             "art"=>Cell::el(thumb(s,&format!("audio:{}",t.id),p,39.0,25.0)),
             "title"=>Cell::text(&t.title),"artist"=>Cell::text(&t.artist),"format"=>Cell::text(&t.format).muted(),
             _=>Cell::el(chip(t.action.label(),p,t.action==model::Decision::Review))}})
         .on_select(|s:&mut App,id,_| {if let Ok(id)=id.parse(){s.select_track(id)}})
-        .style(forge_table_style(p,k)).zebra(true).build(s,k).grow(1.0).min_h(0.0)
+        .style(forge_table_style(p,k,"music")).zebra(forge_components::table("music").zebra).build(s,k).grow(1.0).min_h(0.0)
 }
 fn waveform(s:&App,p:Paint,compact:bool)->El {
     if s.waveform.is_empty(){return row().center_y().child(dim("Select music to generate waveform",p));}
@@ -835,7 +1096,7 @@ fn music_player(s:&App,p:Paint,small:bool)->El {
     let plate=forge_shell(hex("#10070A"),p,false).view_box(1000.,1000.);
     let mut bar=row().h(if small{52.0}else{69.0}).px(13.0).gap(11.0).center_y().fill(Color::TRANSPARENT)
         .child(canvas(plate).w_full().h_full().absolute(0.,0.))
-        .child(action(status,p,true,|s|if let Some(audio)=s.audio.as_ref(){if audio.is_playing(){audio.pause()}else{audio.play()}}));
+        .child(action(status,s,p,true,|s|if let Some(audio)=s.audio.as_ref(){if audio.is_playing(){audio.pause()}else{audio.play()}}));
     if let Some(t)=current{bar=bar.child(thumb(s,&format!("audio:{}",t.id),p,46.0,46.0));}
     if !small {bar=bar.child(col().w(166.0).gap(3.0)
         .child(text("NOW PLAYING").font(rune::tok::type_::LABEL).color(p.brass))
@@ -849,7 +1110,7 @@ fn music_panel(s:&App,p:Paint,small:bool)->El{
     let cats=s.lib.folders();
     let mut groups=col().gap(2.0).padding(4.0).fill(hex("#13080C"))
         .child(row().h(28.0).px(7.0).center_y().child(text("ARTISTS / GROUPS").color(p.brass)));
-    groups=groups.child(action(format!("ALL MUSIC   {}",s.lib.tracks.len()),p,true,|s|{s.search.text.clear();s.recompute()}));
+    groups=groups.child(action(format!("ALL MUSIC   {}",s.lib.tracks.len()),s,p,true,|s|{s.search.text.clear();s.recompute()}));
     for (name,count) in cats.iter().take(if small{7}else{100}){
         let query=name.clone();
         let active=s.search.text.trim()==name.as_str();
@@ -869,40 +1130,40 @@ fn music_panel(s:&App,p:Paint,small:bool)->El{
             .child(chip(format!("{} TRACKS",s.lib.tracks.len()),p,true))
             .child(chip(format!("{} DUPLICATES",s.lib.duplicates()),p,false))
             .child(el().grow(1.0))
-            .child(action("SCAN",p,false,|s|s.scan())));
+            .child(action_icon_label("+","SCAN",s,p,false,|s|s.scan())));
     body=body.child(row().gap(6.0).grow(1.0).min_h(0.0)
         .child(groups.w(if small{177.0}else{230.0}).scroll(ScrollSpec { stick_bottom: false }).min_h(0.0))
         .child(music_table(s,p)));
     body=body.child(music_player(s,p,small));
     if !small {
         body=body.child(row().gap(8.0).h(38.0).center_y()
-            .child(action("KEEP",p,false,|s|s.mark(model::Decision::Keep)))
-            .child(action("REVIEW",p,false,|s|s.mark(model::Decision::Review)))
-            .child(action("SKIP",p,false,|s|s.mark(model::Decision::Skip)))
+            .child(action("KEEP",s,p,false,|s|s.mark(model::Decision::Keep)))
+            .child(action("REVIEW",s,p,false,|s|s.mark(model::Decision::Review)))
+            .child(action("SKIP",s,p,false,|s|s.mark(model::Decision::Skip)))
             .child(TextInput::new(&s.artist_edit).placeholder("Artist name").width(Some(180.0)).on_edit(|s:&mut App|&mut s.artist_edit).build(kit(s.dark)))
-            .child(action("SAVE ARTIST",p,true,|s|s.rename())));
+            .child(action("SAVE ARTIST",s,p,true,|s|s.rename())));
         body=body.child(row().gap(8.0).h(34.0)
-            .child(action("STAGE",p,false,|s|s.confirm=Some("stage")))
-            .child(action("PUBLISH",p,false,|s|s.confirm=Some("publish")))
-            .child(action("RESTORE",p,false,|s|s.confirm=Some("restore")))
-            .child(action("FINALIZE",p,false,|s|s.confirm=Some("finalize"))));
+            .child(action("STAGE",s,p,false,|s|s.confirm=Some("stage")))
+            .child(action("PUBLISH",s,p,false,|s|s.confirm=Some("publish")))
+            .child(action("RESTORE",s,p,false,|s|s.confirm=Some("restore")))
+            .child(action("FINALIZE",s,p,false,|s|s.confirm=Some("finalize"))));
         if let Some(op)=s.confirm{body=body.child(row().gap(10.0).h(36.0).center_y().fill(p.red_dim)
             .child(label(format!("Confirm {op}? This changes files on disk."),p))
-            .child(action("CONFIRM",p,true,|s|s.commit_operation()))
-            .child(action("CANCEL",p,false,|s|s.confirm=None)));}
+            .child(action("CONFIRM",s,p,true,|s|s.commit_operation()))
+            .child(action("CANCEL",s,p,false,|s|s.confirm=None)));}
     }
     body
 }
 fn job_row(s:&App,p:Paint,index:usize)->El{
     let j=&s.queue.jobs()[index];let id=j.id;
     let progress=j.progress.unwrap_or(0.0).clamp(0.0,1.0);
-    col().key(format!("job-{id}")).w_full().gap(5.0).padding(9.0).fill(Color::TRANSPARENT)
+    col().key(format!("job-{id}")).w_full().gap(5.0).padding(forge_components::table("downloads").cell_padding).fill(Color::TRANSPARENT)
         .child(canvas(forge_shell(p.pane2,p,false).view_box(1000.,1000.)).w_full().h_full().absolute(0.,0.))
         .child(row().gap(8.0).center_y()
             .child(chip(j.kind.label(),p,false))
             .child(text(j.current_item.clone().chars().take(44).collect::<String>()).color(p.ink).grow(1.0))
             .child(chip(j.state.label(),p,j.state.is_pending()))
-            .child(action(if j.state.can_retry(){"RETRY"}else{"STOP"},p,false,move|s|{
+            .child(action(if j.state.can_retry(){"RETRY"}else{"STOP"},s,p,false,move|s|{
                 if s.queue.jobs().iter().any(|j|j.id==id&&j.state.can_retry()){s.queue.retry(id)}else{s.queue.cancel(id)}s.recompute();})))
         .child(row().h(12.0).gap(8.0).center_y()
             .child(el().h(6.0).grow(1.0).fill(p.bg).border(1.0,p.line)
@@ -931,10 +1192,10 @@ fn downloader_panel(s:&App,p:Paint,small:bool)->El{
     let failed=s.queue.jobs().iter().filter(|j|j.state.can_retry()).count();
     let mut content=col().padding(if small{7.0}else{11.0}).gap(7.0).min_h(0.0).grow(1.0)
         .child(row().gap(6.0).center_y()
-            .child(action(format!("QUEUE ({queued})"),p,s.queue_filter==1,|s|{s.queue_filter=1;s.recompute()}))
-            .child(action(format!("ACTIVE ({active})"),p,s.queue_filter==0,|s|{s.queue_filter=0;s.recompute()}))
-            .child(action(format!("DONE ({done})"),p,s.queue_filter==2,|s|{s.queue_filter=2;s.recompute()}))
-            .child(action(format!("FAILED ({failed})"),p,s.queue_filter==3,|s|{s.queue_filter=3;s.recompute()})));
+            .child(action_state(format!("QUEUE ({queued})"),s,p,s.queue_filter==1,s.queue_filter==1,|s|{s.queue_filter=1;s.recompute()}))
+            .child(action_state(format!("ACTIVE ({active})"),s,p,s.queue_filter==0,s.queue_filter==0,|s|{s.queue_filter=0;s.recompute()}))
+            .child(action_state(format!("DONE ({done})"),s,p,s.queue_filter==2,s.queue_filter==2,|s|{s.queue_filter=2;s.recompute()}))
+            .child(action_state(format!("FAILED ({failed})"),s,p,s.queue_filter==3,s.queue_filter==3,|s|{s.queue_filter=3;s.recompute()})));
     content=content.child(list.scroll(ScrollSpec{stick_bottom:false}).grow(1.0).min_h(0.0));
     let selected=s.queue.jobs().iter().find(|j|j.state.is_pending()).or_else(||s.queue.jobs().last());
     let progress=selected.and_then(|j|j.progress).unwrap_or(0.0).clamp(0.0,1.0);
@@ -950,8 +1211,8 @@ fn downloader_panel(s:&App,p:Paint,small:bool)->El{
         content=content.child(row().gap(8.0).center_y().h(38.0)
             .child(TextInput::new(&s.url).placeholder("Paste HTTPS media URL").width(None)
                 .on_edit(|s:&mut App|&mut s.url).build(kit(s.dark)).grow(1.0))
-            .child(action(if s.source==0{"SOURCE: MUSIC"}else{"SOURCE: REEL"},p,false,|s|s.source=1-s.source))
-            .child(action("+ ADD",p,true,|s|s.add_url())));
+            .child(action(if s.source==0{"SOURCE: MUSIC"}else{"SOURCE: REEL"},s,p,false,|s|s.source=1-s.source))
+            .child(action_icon_label("+","ADD",s,p,true,|s|s.add_url())));
     }
     content
 }
@@ -964,11 +1225,17 @@ fn models_panel(s:&App,p:Paint)->El{
             .child(text("⬡").color(p.brass))
             .child(col().grow(1.0).gap(4.0).child(label(m.name.clone(),p)).child(dim(m.role.clone(),p)))
             .child(dim(m.size.clone(),p)).child(chip(m.status.clone(),p,m.status=="On disk"))
-            .child(action("VERIFY",p,false,move|s|s.model_operation(verify_id.clone(),"verify")))
-            .child(action("INSTALL",p,true,move|s|s.model_operation(install_id.clone(),"install"))));
+            .child(action("VERIFY",s,p,false,move|s|s.model_operation(verify_id.clone(),"verify")))
+            .child(action("INSTALL",s,p,true,move|s|s.model_operation(install_id.clone(),"install"))));
     }
     list.scroll(ScrollSpec { stick_bottom: false }).grow(1.0).min_h(0.0)
 }
+// Rune is the persistent shell/configuration surface. The GPU workspaces run in
+// their own event loops: egui for editor/actions and GPUI for the operator deck.
+
+
+
+
 fn workspace(s:&App,p:Paint)->El{
     col().key("forge-workspace").gap(8.0).grow(1.0).min_h(0.0)
         .child(row().gap(8.0).grow(1.0).min_h(0.0)
@@ -980,12 +1247,12 @@ fn workspace(s:&App,p:Paint)->El{
 }
 fn settings_panel(s:&App,p:Paint)->El{
     col().padding(18.0).gap(15.0).child(heading("APPEARANCE",p))
-        .child(action("TOGGLE LIGHT / DARK",p,true,|s|s.dark=!s.dark))
+        .child(action("TOGGLE LIGHT / DARK",s,p,true,|s|s.dark=!s.dark))
         .child(rule(p)).child(heading("LOCAL PATHS",p))
         .child(label(format!("Music: {}",s.root.display()),p))
         .child(label(format!("Reels: {}",s.reel_root.display()),p))
         .child(label("Models: <project>/models",p))
-        .child(rule(p)).child(dim("Palette: forged black / crimson / brushed brass. Strict 2px radius. No glass blur.",p))
+        .child(rule(p)).child(dim("Palette: forged black / crimson / brushed brass. 4px controls • looping traced border and click ripple • native Rune renderer.",p))
 }
 fn view(s:&App,_cx:&mut Cx<App>)->El {
     let p=paint(s.dark);
@@ -1009,4 +1276,51 @@ fn view(s:&App,_cx:&mut Cx<App>)->El {
 }
 fn main(){
     rune::run(AppSpec {setup:Some(setup),poll:Some(poll),..AppSpec::new("GatherForge — Forge Edition",(1640.0,930.0),init,view)});
+}
+
+#[cfg(test)]
+mod forge_button_tests {
+    use super::*;
+    #[test]
+    fn light_travels_on_a_closed_rounded_edge() {
+        let pts=forge_edge_path(156.0,34.0);
+        assert_eq!(pts.first(),pts.last());
+        assert!(pts.len()>30);
+        for i in 0..=100 {
+            let [x,y]=forge_perimeter_point(&pts,i as f32/100.0);
+            assert!((0.0..=156.0).contains(&x));
+            assert!((0.0..=34.0).contains(&y));
+        }
+    }
+    #[test]
+    fn click_creates_a_single_bounded_ripple() {
+        let mut ui=ForgeInteraction::default();
+        ui.layout("t",120.0,34.0);
+        ui.pointer("t",17.0,12.0);
+        ui.click("t");
+        let ripple=ui.get("t").unwrap().ripple.unwrap();
+        assert_eq!(ripple.origin,[17.0,12.0]);
+        assert!(ui.animate());
+    }
+    #[test]
+    fn perimeter_trace_loops_seamlessly_and_stays_in_bounds() {
+        let pts=forge_edge_path(156.0,34.0);
+        for phase in [0.0_f32,0.01,0.20,0.58,0.999,1.0] {
+            let [x,y]=forge_perimeter_point(&pts,phase);
+            assert!((0.0..=156.0).contains(&x));
+            assert!((0.0..=34.0).contains(&y));
+        }
+        let a=forge_perimeter_point(&pts,0.0);
+        let b=forge_perimeter_point(&pts,1.0);
+        assert!((a[0]-b[0]).abs()<0.01);
+        assert!((a[1]-b[1]).abs()<0.01);
+    }
+    #[test]
+    fn hover_enters_and_leaves_without_permanent_animation() {
+        let mut ui=ForgeInteraction::default();
+        ui.hover("t",true);
+        assert!(ui.animate());
+        ui.hover("t",false);
+        assert!(!ui.animate());
+    }
 }

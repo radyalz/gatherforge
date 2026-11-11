@@ -1,0 +1,43 @@
+@import "tailwindcss";
+:root {font-family:Inter,ui-sans-serif,system-ui,sans-serif;background:#090608;color:#f9eee5}
+
+/* Three distinct layers, adapted from the supplied CodeFronts references:
+   (1) SVG pathLength=100 dash for a truly closed perimeter trace,
+   (2) constant-speed infinitely looping stroke-dashoffset on hover,
+   (3) pressed-state INNER glow. Separate pointer-centered ripple is clipped. */
+.gf-forge-button {
+  position:relative;isolation:isolate;overflow:visible;cursor:pointer;
+  border-radius:var(--forge-radius,4px); box-shadow:inset 0 1px 0 rgba(255,225,184,.12),0 2px 8px rgba(0,0,0,.4);
+  transition:box-shadow .2s ease,background .2s ease,border-color .2s ease,transform .13s ease;
+}
+.gf-forge-button:hover {border-color:var(--forge-edge);box-shadow:inset 0 1px 0 rgba(255,225,184,.18),0 2px 8px rgba(0,0,0,.4)}
+.gf-forge-button:active {transform:translateY(1px)}
+.gf-forge-button:disabled {cursor:not-allowed}
+.gf-forge-button[data-active="true"] {
+  border-color:var(--forge-edge);
+  box-shadow:inset 0 0 21px color-mix(in srgb,var(--forge-edge) 28%,transparent),
+             inset 0 0 6px color-mix(in srgb,var(--forge-edge) 58%,transparent),
+             0 1px 7px rgba(0,0,0,.38);
+}
+.gf-forge-button-trace {position:absolute;inset:-1.5px;width:calc(100% + 3px);height:calc(100% + 3px);overflow:visible;pointer-events:none}
+.gf-forge-button-trace rect {
+  width:calc(100% - 3px);height:calc(100% - 3px);fill:none;
+  stroke-dasharray:20 80;stroke-dashoffset:0;stroke-linecap:butt;
+  opacity:0;transition:opacity .22s ease;
+}
+.gf-trace-glow {stroke:var(--forge-edge);stroke-width:7px;filter:blur(4px)}
+.gf-trace-core {stroke-width:2px;filter:drop-shadow(0 0 3px var(--forge-edge))}
+.gf-forge-button:not(:disabled):is(:hover,:focus-visible) .gf-forge-button-trace rect {
+  opacity:1;animation:forge-trace-lap var(--forge-duration,2.1s) linear infinite;
+}
+.gf-forge-button-trace .gf-trace-glow {opacity:0}
+.gf-forge-button:not(:disabled):is(:hover,:focus-visible) .gf-trace-glow {opacity:.5}
+@keyframes forge-trace-lap {to {stroke-dashoffset:-100}}
+.gf-forge-ripple-clip {position:absolute;inset:0;border-radius:var(--forge-radius,4px);overflow:hidden;pointer-events:none;z-index:1}
+.gf-forge-ripple {position:absolute;border-radius:50%;background:rgba(255,245,226,.24);border:1px solid rgba(255,245,226,.3);transform:scale(.025);opacity:1;animation:forge-ripple var(--forge-ripple-duration,.52s) cubic-bezier(.2,.75,.2,1) forwards}
+@keyframes forge-ripple {to {transform:scale(1);opacity:0}}
+.gf-forge-button-caption {position:relative;z-index:2;display:inline-flex;align-items:center;gap:.5rem;pointer-events:none}
+@media (prefers-reduced-motion:reduce) {
+  .gf-forge-button-trace rect {animation:none!important}
+  .gf-forge-ripple {animation:none;display:none}
+}

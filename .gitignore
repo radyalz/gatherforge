@@ -141,3 +141,12 @@ ai.json
 /ui/**/target/
 
 /ui/**/Cargo.lock
+
+# Local binaries and models backed up via GitHub Release (not Git source)
+/GatherForge-Linux-x64
+/GatherForge-Rune-Linux
+/GatherForge-Rust-Linux-*-test
+/Project_Context_Backup.desktop
+/models/bundled/
+/ui/shadcn/node_modules/
+/ui/shadcn/dist/

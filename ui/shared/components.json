@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "version": 1,
+  "description": "Single source of geometry and interaction defaults for GatherForge desktop and shadcn components.",
+  "buttons": {
+    "regular": {
+      "height": 30,
+      "radius": 4,
+      "minimum_width": 54,
+      "padding_x": 11,
+      "font_px": 12.5
+    },
+    "compact": {
+      "height": 26,
+      "radius": 4,
+      "minimum_width": 44,
+      "padding_x": 9,
+      "font_px": 11.5
+    },
+    "pill": {
+      "height": 26,
+      "radius": 999,
+      "minimum_width": 43,
+      "padding_x": 11,
+      "font_px": 11.5
+    },
+    "icon": {
+      "height": 28,
+      "radius": 999,
+      "minimum_width": 28,
+      "padding_x": 4,
+      "font_px": 14
+    },
+    "icon_label": {
+      "height": 30,
+      "radius": 6,
+      "minimum_width": 56,
+      "padding_x": 10,
+      "font_px": 12.5
+    }
+  },
+  "interaction": {
+    "trace_revolution_seconds": 2.1,
+    "trace_fraction": 0.2,
+    "ripple_seconds": 0.52,
+    "trace_frames_per_second": 60
+  },
+  "tables": {
+    "media": {
+      "row_height": 37,
+      "header_height": 31,
+      "cell_padding": 10,
+      "zebra": true,
+      "show_art": true
+    },
+    "music": {
+      "row_height": 36,
+      "header_height": 31,
+      "cell_padding": 9,
+      "zebra": true,
+      "show_art": true
+    },
+    "reels": {
+      "row_height": 42,
+      "header_height": 31,
+      "cell_padding": 9,
+      "zebra": true,
+      "show_art": true
+    },
+    "downloads": {
+      "row_height": 40,
+      "header_height": 30,
+      "cell_padding": 9,
+      "zebra": true,
+      "show_art": false
+    }
+  },
+  "columns": {
+    "media": {
+      "art": {
+        "width": 52,
+        "resizable": false,
+        "sortable": false
+      },
+      "title": {
+        "flex": 3.0,
+        "minimum": 140,
+        "resizable": true,
+        "sortable": true
+      },
+      "artist": {
+        "flex": 2.0,
+        "minimum": 105,
+        "resizable": true,
+        "sortable": true
+      },
+      "format": {
+        "width": 75,
+        "resizable": true,
+        "sortable": true
+      },
+      "review": {
+        "width": 82,
+        "resizable": true,
+        "sortable": true
+      }
+    },
+    "music": {
+      "art": {
+        "width": 50,
+        "resizable": false,
+        "sortable": false
+      },
+      "title": {
+        "flex": 3.0,
+        "minimum": 130,
+        "resizable": true,
+        "sortable": true
+      },
+      "artist": {
+        "flex": 2.0,
+        "minimum": 95,
+        "resizable": true,
+        "sortable": true
+      },
+      "format": {
+        "width": 67,
+        "resizable": true,
+        "sortable": true
+      },
+      "review": {
+        "width": 92,
+        "resizable": true,
+        "sortable": true
+      }
+    }
+  }
+}

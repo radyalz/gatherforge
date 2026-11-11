@@ -2083,3 +2083,18 @@ impl eframe::App for GatherForge {
         self.confirm_popup(ctx);
     }
 }
+
+// Native editor page selection requested by the Rune shell / GPUI operator deck.
+impl GatherForge {
+    pub(crate) fn select_external_page(&mut self, page: &str) {
+        self.page = match page {
+            "media" => Page::Media,
+            "music" => Page::Library,
+            "reels" => Page::ReelManifest,
+            "downloads" => Page::Downloads,
+            "queue" => Page::Manager,
+            "settings" => Page::Settings,
+            _ => Page::Overview,
+        };
+    }
+}

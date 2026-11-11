@@ -22,6 +22,9 @@ fn main() -> eframe::Result {
         }
     }
 
+    let initial_page = args.windows(2)
+        .find(|values| values[0] == "--forge-page")
+        .map(|values| values[1].clone());
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("GatherForge — Forge Edition")
@@ -32,6 +35,10 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "GatherForge",
         options,
-        Box::new(|cc| Ok(Box::new(app::GatherForge::new(cc)))),
+        Box::new(move |cc| {
+            let mut app = app::GatherForge::new(cc);
+            if let Some(page) = initial_page.as_deref() { app.select_external_page(page); }
+            Ok(Box::new(app))
+        }),
     )
 }

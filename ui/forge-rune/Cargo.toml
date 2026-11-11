@@ -5,6 +5,9 @@ edition = "2024"
 publish = false
 
 [dependencies]
+# Actual egui widgets painted inside the Rune-owned window; no eframe/GPUI runners.
+egui = "=0.33.3"
+egui_software_backend = { version = "=0.0.2", default-features = false, features = ["std"] }
 rune = { git = "https://github.com/anomalyco/rune", rev = "1633f8d6c4f4f5804320ced1be4317e1ad4a9033" }
 rune-kit = { git = "https://github.com/anomalyco/rune", rev = "1633f8d6c4f4f5804320ced1be4317e1ad4a9033" }
 lofty = "0.25"
